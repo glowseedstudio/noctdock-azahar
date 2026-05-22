@@ -8,6 +8,8 @@
 
 <p align="center">
   <a href="https://github.com/glowseedstudio/noctdock">NoctDock</a> · companion to the sender and receiver apps
+  ·
+  <a href="docs/USER_GUIDE.md">User guide</a>
 </p>
 
 NoctDock Azahar is a custom build of [Azahar](https://github.com/azahar-emu/azahar) for people who use **NoctDock** on Android handhelds. It keeps normal 3DS emulation on the device, and can send **only the top screen** to a **NoctDock Receiver** on your LAN while the bottom screen, touch, and controls stay on the handheld.
@@ -59,6 +61,8 @@ You need **NoctDock Sender** on the handheld and **NoctDock Receiver** on the TV
 **Launch in 3DS Mode** from the sender checks that Azahar is installed, a receiver is selected, online, and trusted, then opens Azahar with the receiver address, port, negotiated codec, and sound settings. Azahar handles encode and UDP for the top screen; the sender stops its own Console Mode session for that path.
 
 You can also enable **NoctDock 3DS Mode** inside Azahar after a normal launch, once a screen is set up.
+
+**Before 3DS Mode:** pair the TV in NoctDock Sender first, then in Azahar open **Settings → NoctDock 3DS Mode** and set export presets (start with **Balanced**, **Auto** resolution, **30 fps safe**). Adjust **Graphics → Internal Resolution** separately from export size. Full walkthrough: **[User guide](docs/USER_GUIDE.md)**.
 
 ---
 
