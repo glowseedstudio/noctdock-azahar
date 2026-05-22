@@ -339,9 +339,11 @@ void Config::Reload() {
     for (auto key = Settings::Keys::keys_array.begin(); key != Settings::Keys::keys_array.end();
          ++key) {
         const auto key_declaration_string = std::string(*key) + " =";
+        const auto omitted_key = std::ranges::any_of(
+            DefaultINI::android_config_omitted_keys,
+            [key](const auto& omitted) { return std::string(omitted) == std::string(*key); });
         // FIXME: This code looks so ass when formatted by clang-format -OS
-        if (std::ranges::find(DefaultINI::android_config_omitted_keys, *key) ==
-                std::end(DefaultINI::android_config_omitted_keys) &&
+        if (!omitted_key &&
             std::string(DefaultINI::android_config_default_file_content)
                     .find(key_declaration_string) == std::string::npos) {
             ASSERT_MSG(false,

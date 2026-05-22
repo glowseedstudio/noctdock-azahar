@@ -1,141 +1,97 @@
-![Azahar Emulator](https://azahar-emu.org/resources/images/logo/azahar-name-and-logo.svg)
+<p align="center">
+  <img src="docs/naz.png" width="120" alt="NoctDock Azahar app icon">
+</p>
 
-![Current Release](https://img.shields.io/github/v/release/azahar-emu/azahar?label=Current%20Release)
-![Current Prerelease](https://img.shields.io/github/v/release/azahar-emu/azahar?include_prereleases&label=Current%20Prerelease)
+<h1 align="center">NoctDock Azahar</h1>
 
-![GitHub Downloads](https://img.shields.io/github/downloads/azahar-emu/azahar/total?logo=github&label=GitHub%20Downloads)
-![Google Play Downloads](https://playbadges.pavi2410.com/badge/downloads?id=io.github.lime3ds.android&pretty&label=Play%20Store%20Downloads)
-![Flathub Downloads](https://img.shields.io/flathub/downloads/org.azahar_emu.Azahar?logo=flathub&label=Flathub%20Downloads)
-![CI Build Status](https://github.com/azahar-emu/azahar/actions/workflows/build.yml/badge.svg)
+<p align="center"><strong>Azahar fork for 3DS top-screen play on your TV</strong></p>
 
-<b>Azahar</b> is an open-source 3DS emulator project based on Citra.
+<p align="center">
+  <a href="https://github.com/glowseedstudio/noctdock">NoctDock</a> · companion to the sender and receiver apps
+</p>
 
-It was created from the merging of PabloMK7's Citra fork and the Lime3DS project, both of which emerged shortly after Citra was taken down.
+NoctDock Azahar is a custom build of [Azahar](https://github.com/azahar-emu/azahar) for people who use **NoctDock** on Android handhelds. It keeps normal 3DS emulation on the device, and can send **only the top screen** to a **NoctDock Receiver** on your LAN while the bottom screen, touch, and controls stay on the handheld.
 
-The goal of this project is to be the de-facto platform for future development.
+No accounts. No cloud relay. No analytics. Local network only.
 
-# Installation
-
-### Windows
-
-Azahar is available as both an installer and a zip archive.
-
-Download the latest release in your preferred format from the [Releases](https://github.com/azahar-emu/azahar/releases) page.
-
-If you are unsure of whether you want to use MSVC or MSYS2, use MSYS2.
+Package: `com.glowseed.noctdock.azahar` (debug: `com.glowseed.noctdock.azahar.debug`)
 
 ---
 
-### MacOS
+## Why this is a separate app
 
-To download a build that will work on all Macs, you can download the `macos-universal` build on the [Releases](https://github.com/azahar-emu/azahar/releases) page.
+3DS games are meant to be played on two screens at once. Mirroring the whole Android UI to a TV works for many apps, but it is not the same as a real top-and-bottom layout.
 
-Alternatively, if you wish to download a build specifically for your Mac, you can choose either:
-
-- `macos-arm64` for Apple Silicon Macs
-- `macos-x86_64` for Intel Macs
+I wanted the TV to show the **game’s top screen** and the handheld to stay the **bottom screen and controller** — without turning NoctDock into a monolithic emulator build. Keeping Azahar as its own fork keeps upstream attribution clear, GPLv2 compliance straightforward, and the emulator easier for others to hack on.
 
 ---
 
-### Android
+## How it fits with NoctDock
 
-There are two variants of Azahar available on Android, those being the Vanilla and Google Play builds.
+You need **NoctDock Sender** on the handheld and **NoctDock Receiver** on the TV (or another Android display). This APK is the emulator that exports the top screen when **NoctDock 3DS Mode** is active.
 
-The Vanilla build is technically superior, as it uses an alternative method of file management which is faster, but isn't permitted on the Google Play store.
+**Launch** from the sender opens Azahar like any other app while the sender mirrors the full Android display (Console Mode). That path does not start top-screen export by itself.
 
-For most users, we currently recommended downloading Azahar on Android via the Google Play Store for ease of accessibility:
+**Launch in 3DS Mode** from the sender checks that Azahar is installed, a receiver is selected, online, and trusted, then opens Azahar with the receiver address, port, negotiated codec, and sound settings. Azahar handles encode and UDP for the top screen; the sender stops its own Console Mode session for that path.
 
-<a href='https://play.google.com/store/apps/details?id=io.github.lime3ds.android'><img width='180' alt='Get it on Google Play' src='https://raw.githubusercontent.com/pioug/google-play-badges/06ccd9252af1501613da2ca28eaffe31307a4e6d/svg/English.svg'/></a>
-
-Alternatively, you can install the app using Obtainium, allowing you to use the Vanilla variant:
-1. Download and install Obtainium from [here](https://github.com/ImranR98/Obtainium/releases) (use the file named `app-release.apk`)
-2. Open Obtainium and click 'Add App'
-3. Type `https://github.com/azahar-emu/azahar` into the 'App Source URL' section
-4. Click 'Add'
-5. Click 'Install', and select the preferred variant
-
-If you wish, you can also simply install the latest APK from the [Releases](https://github.com/azahar-emu/azahar/releases) page.
-
-Keep in mind that you will not recieve automatic updates when installing via the APK.
+You can also enable **NoctDock 3DS Mode** inside Azahar after a normal launch, once a screen is set up.
 
 ---
 
-### Linux
+## What it does
 
-The recommended format for using Azahar on Linux is the Flatpak available on Flathub:
+| Area | Summary |
+| --- | --- |
+| **Top-screen export** | Encoded stream to the paired receiver over the same NoctDock UDP protocol as Console Mode. |
+| **Local bottom screen** | Touch and lower display stay on the handheld during export. |
+| **Codec negotiation** | AVC or HEVC with fallback if the encoder fails to start. |
+| **Bottom-screen dim** | Optional idle dim on the handheld (Off / Gentle / Dark / Maximum) without affecting the TV picture. |
+| **Normal Azahar** | Still runs as a full emulator when NoctDock export is off. |
+| **Stream Watch** | Optional LAN-only debug metrics when enabled (no cloud telemetry). |
 
-<a href='https://flathub.org/apps/org.azahar_emu.Azahar'><img width='180' alt='Download on Flathub' src='https://dl.flathub.org/assets/badges/flathub-badge-en.png'/></a>
+The export path is moving toward **direct render into the encoder surface** where possible, instead of slow full-frame readback.
 
-Azahar is also available as an AppImage on the [Releases](https://github.com/azahar-emu/azahar/releases) page.
+---
 
-There are two variants of the AppImage available, those being `azahar.AppImage` and `azahar-wayland.AppImage`.
+## What it is not
 
-If you are unsure of which variant to use, we recommend using the default `azahar.AppImage`. This is because of upstream issues in the Wayland ecosystem which may cause problems when running the emulator (e.g. [#1162](https://github.com/azahar-emu/azahar/issues/1162)).
+Not a replacement for upstream Azahar for everyone — it is a **NoctDock-focused fork**. Not a cloud service, not a game store, and not bundled with the sender or receiver APKs (those live in the [noctdock](https://github.com/glowseedstudio/noctdock) repo).
 
-Unless you explicitly require native Wayland support (e.g. you are running a system with no Xwayland), the non-Wayland variant is recommended.
+---
 
-The Flatpak build of Azahar also has native Wayland support disabled by default. If you require native Wayland support, it can be enabled using [Flatseal](https://flathub.org/en/apps/com.github.tchx84.Flatseal).
+## Privacy
 
-# Build instructions
+Same idea as main NoctDock: **local network only.** No accounts, analytics, ads, or remote streaming. Stream Watch, if you turn it on, is for your LAN and debugging — not uploaded anywhere.
 
-Please refer this repository's [wiki](https://github.com/azahar-emu/azahar/wiki/Building-From-Source) for build instructions
+---
 
-# How can I contribute?
+## License
 
-### Pull requests
+This tree is a **derivative of Azahar / Citra**, licensed under **GNU GPLv2** (or later). See `license.txt` in the source tree when published. **NoctDock Sender** and **NoctDock Receiver** are separate projects (Apache 2.0 in the noctdock repo). Distributing builds of this fork must follow GPLv2 (source, notices, `license.txt`).
 
-If you want to implement a change and have the technical capability to do so, we would be happy to accept your contributions.
+Copyright Citra Emulator Project / Azahar Emulator Project — see [NOTICE](NOTICE).
 
-If you are contributing a new feature, it is highly suggested that you first make a Feature Request issue to discuss the addition before writing any code. This is to ensure that your time isn't wasted working on a feature which isn't deemed appropriate for the project.
+---
 
-After creating a pull request, please don't repeatedly merge `master` into your branch. A maintainer will update the branch for you if/ when it is appropriate to do so.
+## Current status
 
-### Language translations
+In active development. Integration covers the Android launch bridge, in-app 3DS Mode settings, Kotlin transport, and native renderer hooks. Full fork source and build notes will be published in this repository as the tree is ready for public checkout.
 
-Additionally, we are accepting language translations on [Transifex](https://app.transifex.com/azahar/azahar). If you know a non-english language listed on our Transifex page, please feel free to contribute.
+For integration detail and testing checklists, see the main NoctDock repo (`NOCTDOCK_AZAHAR_INTEGRATION.md`, `NOCTDOCK_AZAHAR_TESTING.md`) when those docs are linked from a combined release.
 
-> [!NOTE]
-> We are not currently accepting new languages for translation. Please do not request for new languages or language variants to be added.
+---
 
-### Compatibility reports
+## Contributing
 
-Even if you don't wish to contribute code or translations, you can help the project by reporting game compatibility data to our compatibility list.
+Useful help right now: real-device testing (handheld + receiver), export performance on your GPU, HEVC fallback cases, and clear issue reports with device model, Android version, receiver type, Wi‑Fi vs Ethernet, and selected profile.
 
-To do so, simply read https://github.com/azahar-emu/compatibility-list/blob/master/CONTRIBUTING.md and follow the instructions.
+When opening issues, do not paste ROM paths or personal data. GPLv2 applies to contributions in the emulator tree.
 
-Contributing compatibility data helps more accurately reflect the current capabilities of the emulator, so it would be highly appreciated if you could go through the reporting process after completing a game.
+---
 
-# Minimum requirements
+## Links
 
-Below are the minimum requirements to run Azahar:
-
-### Desktop
-
-```
-Operating System: Windows 10 (64-bit), MacOS 13.4 (Ventura), or modern 64-bit Linux
-CPU: x86-64/ARM64 CPU (Windows for ARM not supported).
-     Single core performance higher than 1,800 on Passmark.
-     SSE4.2 required on x86_64.
-GPU: OpenGL 4.3 or Vulkan 1.1 support
-Memory: 2GB of RAM. 4GB is recommended
-```
-### Android
-
-```
-Operating System: Android 10.0+ (64-bit)
-CPU: Snapdragon 835 SoC or better
-GPU: OpenGL ES 3.2 or Vulkan 1.1 support
-Memory: 2GB of RAM. 4GB is recommended
-```
-
-# What's next?
-
-We share public roadmaps for upcoming releases in the form of GitHub milestones.
-
-You can find these at https://github.com/azahar-emu/azahar/milestones.
-
-# Join the conversation
-
-We have a community Discord server where you can chat about the project, keep up to date with the latest announcements, or coordinate emulator development.
-
-Join at https://discord.gg/4ZjMpAp3M6
+| | |
+| -- | -- |
+| **NoctDock (sender / receiver)** | https://github.com/glowseedstudio/noctdock |
+| **Upstream Azahar** | https://github.com/azahar-emu/azahar |

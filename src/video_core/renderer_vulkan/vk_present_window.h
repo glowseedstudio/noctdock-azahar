@@ -37,7 +37,8 @@ struct Frame {
 class PresentWindow final {
 public:
     explicit PresentWindow(Frontend::EmuWindow& emu_window, const Instance& instance,
-                           Scheduler& scheduler, bool low_refresh_rate);
+                           Scheduler& scheduler, bool low_refresh_rate,
+                           bool low_latency_output = false);
     ~PresentWindow();
 
     /// Waits for all queued frames to finish presenting.
@@ -45,6 +46,9 @@ public:
 
     /// Returns the last used render frame.
     Frame* GetRenderFrame();
+
+    /// Returns a frame immediately when one is ready, otherwise nullptr (low-latency output only).
+    Frame* TryGetRenderFrame();
 
     /// Recreates the render frame to match provided parameters.
     void RecreateFrame(Frame* frame, u32 width, u32 height);
@@ -57,6 +61,10 @@ public:
 
     [[nodiscard]] vk::RenderPass Renderpass() const noexcept {
         return present_renderpass;
+    }
+
+    [[nodiscard]] vk::Format SurfaceFormat() const noexcept {
+        return swapchain.GetSurfaceFormat().format;
     }
 
     u32 ImageCount() const noexcept {
@@ -75,6 +83,7 @@ private:
     const Instance& instance;
     Scheduler& scheduler;
     bool low_refresh_rate;
+    bool low_latency_output;
     vk::SurfaceKHR surface;
     vk::SurfaceKHR next_surface{};
     Swapchain swapchain;

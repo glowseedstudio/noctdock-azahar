@@ -2,7 +2,7 @@
 <resources>
 
     <!-- General application strings -->
-    <string name="app_name" translatable="false">Azahar</string>
+    <string name="app_name" translatable="false">NoctDock Azahar</string>
     <string name="app_disclaimer">This software will run applications for the Nintendo 3DS handheld game console. No game titles are included.\n\nBefore you can begin with emulating, please select a folder to store Azahar\'s user data in.\n\nWhat\'s this:\n<a href='https://web.archive.org/web/20240304193549/https://github.com/citra-emu/citra/wiki/Citra-Android-user-data-and-storage'>Wiki - Citra Android user data and storage</a></string>
     <string name="app_notification_channel_name" translatable="false">Azahar</string>
     <string name="app_notification_channel_id" translatable="false">Azahar</string>
@@ -36,6 +36,52 @@
     <string name="select_citra_user_folder_home_description">Changes the files that Azahar uses to load applications</string>
     <string name="theme_and_color_description">Modify the look of the app</string>
     <string name="install_cia_title">Install CIA</string>
+    <string name="noctdock_3ds_mode_title">NoctDock 3DS Mode</string>
+    <string name="noctdock_3ds_mode_description">Send the top screen to another screen while keeping touch on this device.</string>
+    <string name="noctdock_3ds_mode_not_found">NoctDock is not installed</string>
+    <string name="noctdock_3ds_mode_not_found_description">Install NoctDock on this device before enabling 3DS Mode.</string>
+    <string name="noctdock_3ds_mode_enable">Enable NoctDock 3DS Mode</string>
+    <string name="noctdock_3ds_mode_ask_each_time">Ask each time</string>
+    <string name="noctdock_3ds_mode_always_from_noctdock">Always send top screen when launched from NoctDock</string>
+    <string name="noctdock_3ds_mode_play_normally">Play normally</string>
+    <string name="noctdock_3ds_mode_prompt_title">Send Top Screen to NoctDock?</string>
+    <string name="noctdock_3ds_mode_send">Send to Screen</string>
+    <string name="noctdock_3ds_mode_normal">Play Normally</string>
+    <string name="noctdock_3ds_mode_start_failed">NoctDock could not start 3DS Mode. Playing normally.</string>
+    <string name="noctdock_3ds_mode_stopped">NoctDock 3DS Mode stopped. Playing normally.</string>
+    <string name="noctdock_3ds_mode_compatibility_export">Using compatibility export mode.</string>
+    <string name="noctdock_3ds_mode_safety_applied">NoctDock 3DS Mode is using a safer setting to keep gameplay smooth.</string>
+    <string name="noctdock_3ds_mode_receiver_unavailable">NoctDock screen is not available. Playing normally.</string>
+    <string name="noctdock_3ds_mode_export_settings">Export Settings</string>
+    <string name="noctdock_3ds_mode_performance">Export performance</string>
+    <string name="noctdock_3ds_mode_perf_battery">Battery / Safe: 400x240 @ 30fps</string>
+    <string name="noctdock_3ds_mode_perf_balanced">Balanced: 800x480 @ 30fps</string>
+    <string name="noctdock_3ds_mode_perf_sharp">Sharp: 800x480 @ 60fps</string>
+    <string name="noctdock_3ds_mode_perf_tv">TV: 1280x720 @ 30fps</string>
+    <string name="noctdock_3ds_mode_perf_experimental">Experimental: 1280x720 @ 60fps</string>
+    <string name="noctdock_3ds_mode_resolution">Export resolution</string>
+    <string name="noctdock_3ds_mode_fps">Export frame rate</string>
+    <string name="noctdock_3ds_mode_res_auto">Auto (use performance preset size)</string>
+    <string name="noctdock_3ds_mode_res_native">400x240 native top screen</string>
+    <string name="noctdock_3ds_mode_res_sharp">800x480 sharp</string>
+    <string name="noctdock_3ds_mode_res_tv">1280x720 TV</string>
+    <string name="noctdock_3ds_mode_fps_safe">30fps safe mode</string>
+    <string name="noctdock_3ds_mode_fps_normal">60fps test mode</string>
+    <string name="noctdock_3ds_mode_quality_guide_title">Picture quality on your TV</string>
+    <string name="noctdock_3ds_mode_quality_guide_message">NoctDock uses two separate quality controls:\n\n• Internal Resolution (Azahar → Graphics): how sharply the 3DS top screen is rendered on this device. Higher values (for example 2× Native) add detail before streaming.\n\n• Export settings (below): the size and frame rate sent to your TV (for example 800×480 @ 30fps).\n\nRecommended starting points:\n\n• Most handhelds: Internal Resolution 2× Native, Export performance Balanced, Export resolution Auto, Export frame rate 30fps safe.\n\n• Weaker devices or heavy games: Internal Resolution 1× Native, Export performance Battery / Safe.\n\n• Large TV on strong Wi‑Fi: Internal Resolution 2×–3× Native, Export performance TV or Sharp, only after gameplay stays smooth.\n\nRaising export size without enough internal resolution only upscales a soft image. Very high internal resolution costs GPU time and may trigger automatic safety downgrades during play.\n\nYou can reopen this guide anytime from Export Settings → Picture quality guide.</string>
+    <string name="noctdock_3ds_mode_quality_guide_got_it">Got it</string>
+    <string name="noctdock_3ds_mode_quality_guide_menu">Picture quality guide</string>
+    <string name="noctdock_stream_watch_title">NoctDock Stream Watch</string>
+    <string name="noctdock_stream_watch_enable">Enable Stream Watch</string>
+    <string name="noctdock_stream_watch_disable">Stop Stream Watch</string>
+    <string name="noctdock_stream_watch_warning">Debug stream metrics are visible on your local network while enabled.</string>
+    <string name="noctdock_bottom_screen_auto_dim_title">Bottom Screen Auto-Dim</string>
+    <string name="noctdock_bottom_screen_auto_dim_description">Softens the handheld screen while the top screen is on another display.</string>
+    <string name="noctdock_bottom_screen_auto_dim_off">Off: Keep the handheld screen unchanged.</string>
+    <string name="noctdock_bottom_screen_auto_dim_gentle">Gentle: Softer for dark rooms.</string>
+    <string name="noctdock_bottom_screen_auto_dim_dark">Dark: Keeps the bottom screen dim until touched.</string>
+    <string name="noctdock_bottom_screen_auto_dim_maximum">Maximum Dark: Lowest local brightness while idle.</string>
+    <string name="noctdock_bottom_screen_auto_dim_toast">Bottom screen will brighten when touched.</string>
 
     <!-- GPU driver installation -->
     <string name="select_gpu_driver">Select GPU driver</string>

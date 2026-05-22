@@ -38,6 +38,11 @@ import org.citra.citra_emu.features.settings.ui.SettingsActivity
 import org.citra.citra_emu.features.settings.utils.SettingsFile
 import org.citra.citra_emu.model.Game
 import org.citra.citra_emu.model.HomeSetting
+import org.citra.citra_emu.noctdock.NoctDockAvailabilityChecker
+import org.citra.citra_emu.noctdock.BottomScreenAutoDimMode
+import org.citra.citra_emu.noctdock.NoctDockBridgeSettings
+import org.citra.citra_emu.noctdock.NoctDockExportSettingsResolver
+import org.citra.citra_emu.noctdock.NoctDockStreamWatch
 import org.citra.citra_emu.ui.main.MainActivity
 import org.citra.citra_emu.utils.GameHelper
 import org.citra.citra_emu.utils.PermissionsHandler
@@ -121,6 +126,15 @@ class HomeSettingsFragment : Fragment() {
                 }
             ),
             HomeSetting(
+                R.string.noctdock_3ds_mode_title,
+                R.string.noctdock_3ds_mode_description,
+                R.drawable.ic_network,
+                { showNoctDockSettings() },
+                { NoctDockAvailabilityChecker.isSenderInstalled(requireContext()) },
+                R.string.noctdock_3ds_mode_not_found,
+                R.string.noctdock_3ds_mode_not_found_description
+            ),
+            HomeSetting(
                 R.string.install_game_content,
                 R.string.install_game_content_description,
                 R.drawable.ic_install,
@@ -200,6 +214,205 @@ class HomeSettingsFragment : Fragment() {
         }
 
         setInsets()
+    }
+
+    private fun showNoctDockSettings() {
+        val bridgeSettings = NoctDockBridgeSettings(requireContext())
+        val behaviorOptions = arrayOf(
+            getString(R.string.noctdock_3ds_mode_ask_each_time),
+            getString(R.string.noctdock_3ds_mode_always_from_noctdock),
+            getString(R.string.noctdock_3ds_mode_play_normally)
+        )
+        val selectedBehavior = when {
+            !bridgeSettings.enabled -> 2
+            bridgeSettings.launchBehavior == NoctDockBridgeSettings.LaunchBehavior.ALWAYS_SEND_FROM_NOCTDOCK -> 1
+            bridgeSettings.launchBehavior == NoctDockBridgeSettings.LaunchBehavior.PLAY_NORMALLY -> 2
+            else -> 0
+        }
+
+        MaterialAlertDialogBuilder(requireContext())
+            .setTitle(R.string.noctdock_3ds_mode_title)
+            .setMessage(R.string.noctdock_3ds_mode_description)
+            .setSingleChoiceItems(behaviorOptions, selectedBehavior) { dialog, which ->
+                when (which) {
+                    0 -> {
+                        bridgeSettings.enabled = true
+                        bridgeSettings.launchBehavior =
+                            NoctDockBridgeSettings.LaunchBehavior.ASK_EACH_TIME
+                    }
+                    1 -> {
+                        bridgeSettings.enabled = true
+                        bridgeSettings.launchBehavior =
+                            NoctDockBridgeSettings.LaunchBehavior.ALWAYS_SEND_FROM_NOCTDOCK
+                    }
+                    else -> {
+                        bridgeSettings.enabled = false
+                        bridgeSettings.launchBehavior =
+                            NoctDockBridgeSettings.LaunchBehavior.PLAY_NORMALLY
+                    }
+                }
+                dialog.dismiss()
+            }
+            .setNeutralButton(R.string.noctdock_3ds_mode_export_settings) { _, _ ->
+                showNoctDockExportSettings()
+            }
+            .setNegativeButton(android.R.string.cancel) { _, _ -> }
+            .show()
+    }
+
+    private fun showNoctDockExportSettings() {
+        val bridgeSettings = NoctDockBridgeSettings(requireContext())
+        if (!bridgeSettings.exportQualityGuideShown) {
+            bridgeSettings.exportQualityGuideShown = true
+            showNoctDockExportQualityGuide { showNoctDockExportSettingsMenu() }
+            return
+        }
+        showNoctDockExportSettingsMenu()
+    }
+
+    private fun showNoctDockExportSettingsMenu() {
+        val bridgeSettings = NoctDockBridgeSettings(requireContext())
+        val options = arrayOf(
+            getString(R.string.noctdock_3ds_mode_performance),
+            getString(R.string.noctdock_3ds_mode_resolution),
+            getString(R.string.noctdock_3ds_mode_fps),
+            getString(R.string.noctdock_3ds_mode_quality_guide_menu),
+            getString(R.string.noctdock_bottom_screen_auto_dim_title),
+            getString(R.string.noctdock_stream_watch_title)
+        )
+        MaterialAlertDialogBuilder(requireContext())
+            .setTitle(R.string.noctdock_3ds_mode_export_settings)
+            .setItems(options) { _, which ->
+                when (which) {
+                    0 -> showNoctDockPerformanceSettings()
+                    1 -> showNoctDockResolutionSettings()
+                    2 -> showNoctDockFpsSettings()
+                    3 -> showNoctDockExportQualityGuide()
+                    4 -> showNoctDockBottomScreenAutoDimSettings()
+                    else -> showNoctDockStreamWatchSettings()
+                }
+            }
+            .setPositiveButton(R.string.noctdock_3ds_mode_enable) { _, _ ->
+                bridgeSettings.enabled = true
+                if (bridgeSettings.launchBehavior == NoctDockBridgeSettings.LaunchBehavior.PLAY_NORMALLY) {
+                    bridgeSettings.launchBehavior =
+                        NoctDockBridgeSettings.LaunchBehavior.ASK_EACH_TIME
+                }
+            }
+            .setNegativeButton(android.R.string.cancel) { _, _ -> }
+            .show()
+    }
+
+    private fun showNoctDockExportQualityGuide(onDismiss: (() -> Unit)? = null) {
+        MaterialAlertDialogBuilder(requireContext())
+            .setTitle(R.string.noctdock_3ds_mode_quality_guide_title)
+            .setMessage(R.string.noctdock_3ds_mode_quality_guide_message)
+            .setPositiveButton(R.string.noctdock_3ds_mode_quality_guide_got_it) { dialog, _ ->
+                dialog.dismiss()
+                onDismiss?.invoke()
+            }
+            .setOnCancelListener { onDismiss?.invoke() }
+            .show()
+    }
+
+    private fun showNoctDockPerformanceSettings() {
+        val bridgeSettings = NoctDockBridgeSettings(requireContext())
+        val values = NoctDockBridgeSettings.ExportPerformanceMode.entries
+        val labels = arrayOf(
+            getString(R.string.noctdock_3ds_mode_perf_battery),
+            getString(R.string.noctdock_3ds_mode_perf_balanced),
+            getString(R.string.noctdock_3ds_mode_perf_sharp),
+            getString(R.string.noctdock_3ds_mode_perf_tv),
+            getString(R.string.noctdock_3ds_mode_perf_experimental)
+        )
+        MaterialAlertDialogBuilder(requireContext())
+            .setTitle(R.string.noctdock_3ds_mode_performance)
+            .setSingleChoiceItems(labels, values.indexOf(bridgeSettings.exportPerformanceMode)) { dialog, which ->
+                NoctDockExportSettingsResolver.applyPerformanceMode(
+                    bridgeSettings,
+                    values[which],
+                )
+                dialog.dismiss()
+            }
+            .setNegativeButton(android.R.string.cancel) { _, _ -> }
+            .show()
+    }
+
+    private fun showNoctDockBottomScreenAutoDimSettings() {
+        val bridgeSettings = NoctDockBridgeSettings(requireContext())
+        val values = BottomScreenAutoDimMode.entries
+        val labels = arrayOf(
+            getString(R.string.noctdock_bottom_screen_auto_dim_off),
+            getString(R.string.noctdock_bottom_screen_auto_dim_gentle),
+            getString(R.string.noctdock_bottom_screen_auto_dim_dark),
+            getString(R.string.noctdock_bottom_screen_auto_dim_maximum)
+        )
+        MaterialAlertDialogBuilder(requireContext())
+            .setTitle(R.string.noctdock_bottom_screen_auto_dim_title)
+            .setMessage(R.string.noctdock_bottom_screen_auto_dim_description)
+            .setSingleChoiceItems(labels, values.indexOf(bridgeSettings.bottomScreenAutoDimMode)) { dialog, which ->
+                bridgeSettings.bottomScreenAutoDimMode = values[which]
+                dialog.dismiss()
+            }
+            .setNegativeButton(android.R.string.cancel) { _, _ -> }
+            .show()
+    }
+
+    private fun showNoctDockStreamWatchSettings() {
+        val bridgeSettings = NoctDockBridgeSettings(requireContext())
+        val enableLabel =
+            if (bridgeSettings.streamWatchEnabled) {
+                getString(R.string.noctdock_stream_watch_disable)
+            } else {
+                getString(R.string.noctdock_stream_watch_enable)
+            }
+        MaterialAlertDialogBuilder(requireContext())
+            .setTitle(R.string.noctdock_stream_watch_title)
+            .setMessage(R.string.noctdock_stream_watch_warning)
+            .setPositiveButton(enableLabel) { _, _ ->
+                bridgeSettings.streamWatchEnabled = !bridgeSettings.streamWatchEnabled
+                if (!bridgeSettings.streamWatchEnabled) {
+                    NoctDockStreamWatch.stop()
+                }
+            }
+            .setNegativeButton(android.R.string.cancel) { _, _ -> }
+            .show()
+    }
+
+    private fun showNoctDockResolutionSettings() {
+        val bridgeSettings = NoctDockBridgeSettings(requireContext())
+        val values = NoctDockBridgeSettings.ExportResolution.entries
+        val labels = arrayOf(
+            getString(R.string.noctdock_3ds_mode_res_auto),
+            getString(R.string.noctdock_3ds_mode_res_native),
+            getString(R.string.noctdock_3ds_mode_res_sharp),
+            getString(R.string.noctdock_3ds_mode_res_tv)
+        )
+        MaterialAlertDialogBuilder(requireContext())
+            .setTitle(R.string.noctdock_3ds_mode_resolution)
+            .setSingleChoiceItems(labels, values.indexOf(bridgeSettings.exportResolution)) { dialog, which ->
+                bridgeSettings.exportResolution = values[which]
+                dialog.dismiss()
+            }
+            .setNegativeButton(android.R.string.cancel) { _, _ -> }
+            .show()
+    }
+
+    private fun showNoctDockFpsSettings() {
+        val bridgeSettings = NoctDockBridgeSettings(requireContext())
+        val values = NoctDockBridgeSettings.ExportFps.entries
+        val labels = arrayOf(
+            getString(R.string.noctdock_3ds_mode_fps_safe),
+            getString(R.string.noctdock_3ds_mode_fps_normal)
+        )
+        MaterialAlertDialogBuilder(requireContext())
+            .setTitle(R.string.noctdock_3ds_mode_fps)
+            .setSingleChoiceItems(labels, values.indexOf(bridgeSettings.exportFps)) { dialog, which ->
+                bridgeSettings.exportFps = values[which]
+                dialog.dismiss()
+            }
+            .setNegativeButton(android.R.string.cancel) { _, _ -> }
+            .show()
     }
 
     override fun onStart() {

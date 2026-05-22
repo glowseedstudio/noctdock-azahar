@@ -27,6 +27,7 @@ import androidx.preference.PreferenceManager
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import org.citra.citra_emu.activities.EmulationActivity
 import org.citra.citra_emu.model.Game
+import org.citra.citra_emu.noctdock.NoctDockTopScreenExportManager
 import org.citra.citra_emu.utils.BuildUtil
 import org.citra.citra_emu.utils.FileUtil
 import org.citra.citra_emu.utils.Log
@@ -180,6 +181,63 @@ object NativeLibrary {
     // Second window
     external fun secondarySurfaceChanged(secondary_surface: Surface)
     external fun secondarySurfaceDestroyed()
+
+    external fun startNoctDockTopScreenExport(
+        width: Int,
+        height: Int,
+        fps: Int,
+        preferredCodec: String,
+        sessionId: String,
+        receiverAddress: String,
+        receiverPort: Int,
+        audioMode: String
+    ): Boolean
+
+    external fun stopNoctDockTopScreenExport()
+    external fun isNoctDockTopScreenExporting(): Boolean
+    external fun getNoctDockTopScreenExportBackend(): String
+    external fun getNoctDockCurrentRendererBackend(): String
+    external fun updateNoctDockTopScreenExportProfile(width: Int, height: Int, fps: Int)
+    external fun setNoctDockEncoderInputSurface(surface: Surface)
+    external fun clearNoctDockEncoderInputSurface()
+
+    @Keep
+    @JvmStatic
+    fun onNoctDockTopScreenFrame(
+        frame: ByteArray,
+        width: Int,
+        height: Int,
+        presentationTimeUs: Long,
+        readbackTimeUs: Long,
+        exportTimeUs: Long
+    ) {
+        NoctDockTopScreenExportManager.offerFrame(
+            frame,
+            width,
+            height,
+            presentationTimeUs,
+            readbackTimeUs,
+            exportTimeUs
+        )
+    }
+
+    @Keep
+    @JvmStatic
+    fun onNoctDockTopScreenExportError(message: String) {
+        NoctDockTopScreenExportManager.handleNativeExportFailure(message)
+    }
+
+    @Keep
+    @JvmStatic
+    fun onNoctDockSurfaceExportFallback(message: String) {
+        NoctDockTopScreenExportManager.handleSurfaceExportFallback(message)
+    }
+
+    @Keep
+    @JvmStatic
+    fun onNoctDockSurfaceFramePresented(presentationTimeUs: Long, exportTimeUs: Long) {
+        NoctDockTopScreenExportManager.onSurfaceFramePresented(presentationTimeUs, exportTimeUs)
+    }
 
     /**
      * Unpauses emulation from a paused state.

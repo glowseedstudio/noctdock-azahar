@@ -3,12 +3,16 @@
 // Refer to the license.txt file included.
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <codecvt>
 #include <thread>
 #include <dlfcn.h>
 
 #include <android/api-level.h>
 #include <android/native_window_jni.h>
+#include <EGL/egl.h>
+#include <EGL/eglext.h>
 #include <core/hw/aes/key.h>
 #include <core/loader/smdh.h>
 #include <core/system_titles.h>
@@ -96,6 +100,25 @@ jlong ptm_current_title_id = std::numeric_limits<jlong>::max(); // Arbitrary def
 
 std::atomic<bool> stop_run{true};
 std::atomic<bool> pause_emulation{false};
+std::atomic<bool> s_noctdock_exporting{false};
+std::atomic<int> s_noctdock_export_width{400};
+std::atomic<int> s_noctdock_export_height{240};
+std::atomic<int> s_noctdock_export_fps{60};
+std::atomic<s64> s_noctdock_last_frame_ns{0};
+std::atomic<int> s_noctdock_export_backend{0};
+std::atomic<bool> s_noctdock_error_reported{false};
+std::atomic<int> s_noctdock_export_path{0};
+jmethodID s_noctdock_frame_callback = nullptr;
+jmethodID s_noctdock_error_callback = nullptr;
+std::mutex s_noctdock_encoder_surface_mutex;
+ANativeWindow* s_noctdock_encoder_window = nullptr;
+EGLSurface s_noctdock_encoder_egl_surface = EGL_NO_SURFACE;
+EGLSurface s_noctdock_previous_draw_surface = EGL_NO_SURFACE;
+EGLSurface s_noctdock_previous_read_surface = EGL_NO_SURFACE;
+EGLContext s_noctdock_previous_context = EGL_NO_CONTEXT;
+int s_noctdock_encoder_surface_width = 0;
+int s_noctdock_encoder_surface_height = 0;
+PFNEGLPRESENTATIONTIMEANDROIDPROC s_noctdock_egl_presentation_time = nullptr;
 
 std::mutex paused_mutex;
 std::mutex running_mutex;
@@ -104,6 +127,240 @@ std::condition_variable running_cv;
 std::string inserted_cartridge;
 
 } // Anonymous namespace
+
+extern "C" bool NoctDockTopScreenExportIsEnabled() {
+    return s_noctdock_exporting.load(std::memory_order_relaxed);
+}
+
+extern "C" int NoctDockTopScreenExportWidth() {
+    return s_noctdock_export_width.load(std::memory_order_relaxed);
+}
+
+extern "C" int NoctDockTopScreenExportHeight() {
+    return s_noctdock_export_height.load(std::memory_order_relaxed);
+}
+
+extern "C" bool NoctDockTopScreenExportShouldCaptureFrame() {
+    if (!s_noctdock_exporting.load(std::memory_order_relaxed)) {
+        return false;
+    }
+    const int path = s_noctdock_export_path.load(std::memory_order_relaxed);
+    if (path == 1 || path == 4) {
+        // Encoder surfaces are paced by swapchain buffer availability, not wall clock.
+        return true;
+    }
+    const auto now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                            std::chrono::steady_clock::now().time_since_epoch())
+                            .count();
+    const int fps = std::max(1, s_noctdock_export_fps.load(std::memory_order_relaxed));
+    const s64 min_frame_interval_ns = 1'000'000'000LL / fps;
+    const s64 previous_ns = s_noctdock_last_frame_ns.load(std::memory_order_relaxed);
+    return previous_ns == 0 || now_ns - previous_ns >= min_frame_interval_ns;
+}
+
+extern "C" bool NoctDockTopScreenExportUsesEncoderSurface() {
+    const int path = s_noctdock_export_path.load(std::memory_order_relaxed);
+    return path == 1 || path == 4;
+}
+
+extern "C" ANativeWindow* NoctDockTopScreenExportEncoderWindow() {
+    std::scoped_lock lock{s_noctdock_encoder_surface_mutex};
+    return s_noctdock_encoder_window;
+}
+
+extern "C" void NoctDockTopScreenExportReleaseEncoderSurface() {
+    const EGLDisplay display = eglGetCurrentDisplay();
+    if (display != EGL_NO_DISPLAY && s_noctdock_encoder_egl_surface != EGL_NO_SURFACE) {
+        eglDestroySurface(display, s_noctdock_encoder_egl_surface);
+    }
+    s_noctdock_encoder_egl_surface = EGL_NO_SURFACE;
+    s_noctdock_encoder_surface_width = 0;
+    s_noctdock_encoder_surface_height = 0;
+}
+
+extern "C" bool NoctDockTopScreenExportBeginEncoderSurface(int width, int height) {
+    std::scoped_lock lock{s_noctdock_encoder_surface_mutex};
+    if (s_noctdock_encoder_window == nullptr || width <= 0 || height <= 0) {
+        return false;
+    }
+    const EGLDisplay display = eglGetCurrentDisplay();
+    const EGLContext context = eglGetCurrentContext();
+    if (display == EGL_NO_DISPLAY || context == EGL_NO_CONTEXT) {
+        return false;
+    }
+    s_noctdock_previous_draw_surface = eglGetCurrentSurface(EGL_DRAW);
+    s_noctdock_previous_read_surface = eglGetCurrentSurface(EGL_READ);
+    s_noctdock_previous_context = context;
+    if (s_noctdock_encoder_egl_surface == EGL_NO_SURFACE ||
+        s_noctdock_encoder_surface_width != width ||
+        s_noctdock_encoder_surface_height != height) {
+        NoctDockTopScreenExportReleaseEncoderSurface();
+        EGLint config_id{};
+        EGLConfig current_config{};
+        EGLint num_configs{};
+        if (eglQueryContext(display, context, EGL_CONFIG_ID, &config_id) != EGL_TRUE) {
+            return false;
+        }
+        const EGLint attribs[] = {EGL_CONFIG_ID, config_id, EGL_NONE};
+        if (eglChooseConfig(display, attribs, &current_config, 1, &num_configs) != EGL_TRUE ||
+            num_configs <= 0) {
+            return false;
+        }
+        EGLint format{};
+        eglGetConfigAttrib(display, current_config, EGL_NATIVE_VISUAL_ID, &format);
+        EGLint recordable{};
+        eglGetConfigAttrib(display, current_config, EGL_RECORDABLE_ANDROID, &recordable);
+        if (recordable != EGL_TRUE) {
+            LOG_WARNING(Frontend,
+                        "NoctDock encoder EGL config is not recordable; MediaCodec surface may reject frames");
+        }
+        ANativeWindow_setBuffersGeometry(s_noctdock_encoder_window, width, height, format);
+        s_noctdock_encoder_egl_surface =
+            eglCreateWindowSurface(display, current_config, s_noctdock_encoder_window, nullptr);
+        if (s_noctdock_encoder_egl_surface == EGL_NO_SURFACE) {
+            return false;
+        }
+        s_noctdock_encoder_surface_width = width;
+        s_noctdock_encoder_surface_height = height;
+        LOG_INFO(Frontend, "NoctDock encoder EGL surface prepared {}x{}", width, height);
+    }
+    return eglMakeCurrent(display, s_noctdock_encoder_egl_surface, s_noctdock_encoder_egl_surface,
+                          context) == EGL_TRUE;
+}
+
+extern "C" void NoctDockTopScreenExportEndEncoderSurface() {
+    const EGLDisplay display = eglGetCurrentDisplay();
+    if (display == EGL_NO_DISPLAY || s_noctdock_encoder_egl_surface == EGL_NO_SURFACE) {
+        return;
+    }
+    if (s_noctdock_egl_presentation_time == nullptr) {
+        s_noctdock_egl_presentation_time =
+            reinterpret_cast<PFNEGLPRESENTATIONTIMEANDROIDPROC>(
+                eglGetProcAddress("eglPresentationTimeANDROID"));
+    }
+    if (s_noctdock_egl_presentation_time != nullptr) {
+        const auto now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                std::chrono::steady_clock::now().time_since_epoch())
+                                .count();
+        s_noctdock_egl_presentation_time(display, s_noctdock_encoder_egl_surface,
+                                         static_cast<EGLnsecsANDROID>(now_ns));
+    }
+    eglSwapBuffers(display, s_noctdock_encoder_egl_surface);
+    eglMakeCurrent(display, s_noctdock_previous_draw_surface, s_noctdock_previous_read_surface,
+                   s_noctdock_previous_context);
+}
+
+extern "C" void NoctDockTopScreenExportNotifySurfaceFrame(s64 export_time_us) {
+    if (!s_noctdock_exporting.load(std::memory_order_relaxed)) {
+        return;
+    }
+    const auto now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                            std::chrono::steady_clock::now().time_since_epoch())
+                            .count();
+    s_noctdock_last_frame_ns.store(now_ns, std::memory_order_relaxed);
+    JNIEnv* env = IDCache::GetEnvForThread();
+    jmethodID method = env->GetStaticMethodID(IDCache::GetNativeLibraryClass(),
+                                              "onNoctDockSurfaceFramePresented", "(JJ)V");
+    if (method == nullptr) {
+        return;
+    }
+    env->CallStaticVoidMethod(IDCache::GetNativeLibraryClass(), method,
+                              static_cast<jlong>(now_ns / 1000),
+                              static_cast<jlong>(export_time_us));
+}
+
+extern "C" void NoctDockTopScreenExportNotifySurfaceFrameFromPresent() {
+    NoctDockTopScreenExportNotifySurfaceFrame(0);
+}
+
+extern "C" void NoctDockTopScreenExportReportFailure(const char* message) {
+    if (!s_noctdock_exporting.exchange(false, std::memory_order_relaxed)) {
+        return;
+    }
+    if (s_noctdock_error_reported.exchange(true, std::memory_order_relaxed)) {
+        return;
+    }
+    JNIEnv* env = IDCache::GetEnvForThread();
+    if (s_noctdock_error_callback == nullptr) {
+        s_noctdock_error_callback = env->GetStaticMethodID(
+            IDCache::GetNativeLibraryClass(), "onNoctDockTopScreenExportError",
+            "(Ljava/lang/String;)V");
+        if (s_noctdock_error_callback == nullptr) {
+            LOG_ERROR(Frontend, "NoctDock export error callback not found");
+            return;
+        }
+    }
+    const char* safe_message =
+        message != nullptr ? message : "NoctDock export stopped. Playing normally.";
+    jstring java_message = env->NewStringUTF(safe_message);
+    env->CallStaticVoidMethod(IDCache::GetNativeLibraryClass(), s_noctdock_error_callback,
+                              java_message);
+    env->DeleteLocalRef(java_message);
+}
+
+extern "C" void NoctDockTopScreenExportFallbackToReadback(const char* message) {
+    if (!s_noctdock_exporting.load(std::memory_order_relaxed)) {
+        return;
+    }
+    const int backend = s_noctdock_export_backend.load(std::memory_order_relaxed);
+    s_noctdock_export_path.store(backend == 2 ? 3 : 2, std::memory_order_relaxed);
+    JNIEnv* env = IDCache::GetEnvForThread();
+    jmethodID method = env->GetStaticMethodID(IDCache::GetNativeLibraryClass(),
+                                              "onNoctDockSurfaceExportFallback",
+                                              "(Ljava/lang/String;)V");
+    if (method == nullptr) {
+        LOG_ERROR(Frontend, "NoctDock surface fallback callback not found");
+        return;
+    }
+    const char* safe_message =
+        message != nullptr ? message : "Using compatibility export mode.";
+    jstring java_message = env->NewStringUTF(safe_message);
+    env->CallStaticVoidMethod(IDCache::GetNativeLibraryClass(), method, java_message);
+    env->DeleteLocalRef(java_message);
+}
+
+extern "C" void NoctDockTopScreenExportSubmitFrame(const u8* rgba, int width, int height,
+                                                   s64 readback_time_us, s64 export_time_us) {
+    if (!s_noctdock_exporting.load(std::memory_order_relaxed) || rgba == nullptr || width <= 0 ||
+        height <= 0) {
+        return;
+    }
+
+    const auto now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                            std::chrono::steady_clock::now().time_since_epoch())
+                            .count();
+    const int fps = std::max(1, s_noctdock_export_fps.load(std::memory_order_relaxed));
+    const s64 min_frame_interval_ns = 1'000'000'000LL / fps;
+    const s64 previous_ns = s_noctdock_last_frame_ns.load(std::memory_order_relaxed);
+    if (previous_ns != 0 && now_ns - previous_ns < min_frame_interval_ns) {
+        return;
+    }
+    s_noctdock_last_frame_ns.store(now_ns, std::memory_order_relaxed);
+
+    JNIEnv* env = IDCache::GetEnvForThread();
+    if (s_noctdock_frame_callback == nullptr) {
+        s_noctdock_frame_callback = env->GetStaticMethodID(
+            IDCache::GetNativeLibraryClass(), "onNoctDockTopScreenFrame", "([BIIJJJ)V");
+        if (s_noctdock_frame_callback == nullptr) {
+            LOG_ERROR(Frontend, "NoctDock frame callback not found");
+            s_noctdock_exporting.store(false, std::memory_order_relaxed);
+            return;
+        }
+    }
+
+    const jsize byte_count = static_cast<jsize>(width * height * 4);
+    jbyteArray frame = env->NewByteArray(byte_count);
+    if (frame == nullptr) {
+        return;
+    }
+    env->SetByteArrayRegion(frame, 0, byte_count, reinterpret_cast<const jbyte*>(rgba));
+    env->CallStaticVoidMethod(IDCache::GetNativeLibraryClass(), s_noctdock_frame_callback, frame,
+                              static_cast<jint>(width), static_cast<jint>(height),
+                              static_cast<jlong>(now_ns / 1000),
+                              static_cast<jlong>(readback_time_us),
+                              static_cast<jlong>(export_time_us));
+    env->DeleteLocalRef(frame);
+}
 
 static jobject ToJavaCoreError(Core::System::ResultStatus result) {
     static const std::map<Core::System::ResultStatus, const char*> CoreErrorNameMap{
@@ -411,6 +668,128 @@ void Java_org_citra_citra_1emu_NativeLibrary_secondarySurfaceDestroyed(
     }
 
     LOG_INFO(Frontend, "Secondary Surface Destroyed");
+}
+
+jboolean Java_org_citra_citra_1emu_NativeLibrary_startNoctDockTopScreenExport(
+    JNIEnv* env, [[maybe_unused]] jobject obj, jint width, jint height, jint fps,
+    [[maybe_unused]] jstring preferred_codec, [[maybe_unused]] jstring session_id,
+    [[maybe_unused]] jstring receiver_address, [[maybe_unused]] jint receiver_port,
+    [[maybe_unused]] jstring audio_mode) {
+    const auto graphics_api = Settings::values.graphics_api.GetValue();
+    if (graphics_api != Settings::GraphicsAPI::OpenGL &&
+        graphics_api != Settings::GraphicsAPI::Vulkan) {
+        LOG_WARNING(Frontend, "NoctDock 3DS Mode requested without a supported renderer");
+        s_noctdock_exporting.store(false, std::memory_order_relaxed);
+        return JNI_FALSE;
+    }
+
+    s_noctdock_export_width.store(std::max(1, static_cast<int>(width)), std::memory_order_relaxed);
+    s_noctdock_export_height.store(std::max(1, static_cast<int>(height)), std::memory_order_relaxed);
+    s_noctdock_export_fps.store(std::max(1, static_cast<int>(fps)), std::memory_order_relaxed);
+    s_noctdock_last_frame_ns.store(0, std::memory_order_relaxed);
+    s_noctdock_export_backend.store(
+        graphics_api == Settings::GraphicsAPI::Vulkan ? 2 : 1, std::memory_order_relaxed);
+    if (s_noctdock_encoder_window != nullptr) {
+        s_noctdock_export_path.store(
+            graphics_api == Settings::GraphicsAPI::Vulkan ? 4 : 1, std::memory_order_relaxed);
+    } else if (graphics_api == Settings::GraphicsAPI::Vulkan) {
+        s_noctdock_export_path.store(3, std::memory_order_relaxed);
+    } else {
+        s_noctdock_export_path.store(2, std::memory_order_relaxed);
+    }
+    s_noctdock_error_reported.store(false, std::memory_order_relaxed);
+    s_noctdock_exporting.store(true, std::memory_order_relaxed);
+    s_noctdock_frame_callback = env->GetStaticMethodID(
+        IDCache::GetNativeLibraryClass(), "onNoctDockTopScreenFrame", "([BIIJJJ)V");
+    if (s_noctdock_frame_callback == nullptr) {
+        s_noctdock_exporting.store(false, std::memory_order_relaxed);
+        LOG_ERROR(Frontend, "NoctDock frame callback not found");
+        return JNI_FALSE;
+    }
+    LOG_INFO(Frontend, "NoctDock 3DS Mode {} export started at {}x{}@{} path={}",
+             graphics_api == Settings::GraphicsAPI::Vulkan ? "Vulkan experimental" : "OpenGL",
+             static_cast<int>(width), static_cast<int>(height), static_cast<int>(fps),
+             s_noctdock_export_path.load(std::memory_order_relaxed) == 1
+                 ? "opengl_surface"
+                 : (s_noctdock_export_path.load(std::memory_order_relaxed) == 4
+                        ? "vulkan_surface"
+                        : (s_noctdock_export_path.load(std::memory_order_relaxed) == 3
+                               ? "vulkan_readback"
+                               : "opengl_readback")));
+    return JNI_TRUE;
+}
+
+void Java_org_citra_citra_1emu_NativeLibrary_stopNoctDockTopScreenExport(
+    [[maybe_unused]] JNIEnv* env, [[maybe_unused]] jobject obj) {
+    s_noctdock_exporting.store(false, std::memory_order_relaxed);
+    s_noctdock_last_frame_ns.store(0, std::memory_order_relaxed);
+    s_noctdock_export_path.store(0, std::memory_order_relaxed);
+    LOG_INFO(Frontend, "NoctDock 3DS Mode export stopped");
+}
+
+jboolean Java_org_citra_citra_1emu_NativeLibrary_isNoctDockTopScreenExporting(
+    [[maybe_unused]] JNIEnv* env, [[maybe_unused]] jobject obj) {
+    return s_noctdock_exporting.load(std::memory_order_relaxed) ? JNI_TRUE : JNI_FALSE;
+}
+
+jstring Java_org_citra_citra_1emu_NativeLibrary_getNoctDockTopScreenExportBackend(
+    JNIEnv* env, [[maybe_unused]] jobject obj) {
+    switch (s_noctdock_export_backend.load(std::memory_order_relaxed)) {
+    case 2:
+        return env->NewStringUTF("Vulkan");
+    case 1:
+        return env->NewStringUTF("OpenGL");
+    default:
+        return env->NewStringUTF("Unknown");
+    }
+}
+
+jstring Java_org_citra_citra_1emu_NativeLibrary_getNoctDockCurrentRendererBackend(
+    JNIEnv* env, [[maybe_unused]] jobject obj) {
+    switch (Settings::values.graphics_api.GetValue()) {
+    case Settings::GraphicsAPI::Vulkan:
+        return env->NewStringUTF("Vulkan");
+    case Settings::GraphicsAPI::OpenGL:
+        return env->NewStringUTF("OpenGL");
+    default:
+        return env->NewStringUTF("Unknown");
+    }
+}
+
+void Java_org_citra_citra_1emu_NativeLibrary_updateNoctDockTopScreenExportProfile(
+    [[maybe_unused]] JNIEnv* env, [[maybe_unused]] jobject obj, jint width, jint height, jint fps) {
+    s_noctdock_export_width.store(std::max(1, static_cast<int>(width)), std::memory_order_relaxed);
+    s_noctdock_export_height.store(std::max(1, static_cast<int>(height)), std::memory_order_relaxed);
+    s_noctdock_export_fps.store(std::max(1, static_cast<int>(fps)), std::memory_order_relaxed);
+    s_noctdock_last_frame_ns.store(0, std::memory_order_relaxed);
+    LOG_INFO(Frontend, "NoctDock 3DS Mode export profile updated to {}x{}@{}",
+             static_cast<int>(width), static_cast<int>(height), static_cast<int>(fps));
+}
+
+void Java_org_citra_citra_1emu_NativeLibrary_setNoctDockEncoderInputSurface(
+    JNIEnv* env, [[maybe_unused]] jobject obj, jobject surf) {
+    std::scoped_lock lock{s_noctdock_encoder_surface_mutex};
+    if (s_noctdock_encoder_window != nullptr) {
+        ANativeWindow_release(s_noctdock_encoder_window);
+        s_noctdock_encoder_window = nullptr;
+    }
+    s_noctdock_encoder_window = ANativeWindow_fromSurface(env, surf);
+    LOG_INFO(Frontend, "NoctDock encoder input surface registered");
+}
+
+void Java_org_citra_citra_1emu_NativeLibrary_clearNoctDockEncoderInputSurface(
+    [[maybe_unused]] JNIEnv* env, [[maybe_unused]] jobject obj) {
+    std::scoped_lock lock{s_noctdock_encoder_surface_mutex};
+    NoctDockTopScreenExportReleaseEncoderSurface();
+    if (s_noctdock_encoder_window != nullptr) {
+        ANativeWindow_release(s_noctdock_encoder_window);
+        s_noctdock_encoder_window = nullptr;
+    }
+    if (s_noctdock_exporting.load(std::memory_order_relaxed)) {
+        const int backend = s_noctdock_export_backend.load(std::memory_order_relaxed);
+        s_noctdock_export_path.store(backend == 2 ? 3 : 2, std::memory_order_relaxed);
+    }
+    LOG_INFO(Frontend, "NoctDock encoder input surface cleared");
 }
 
 void Java_org_citra_citra_1emu_NativeLibrary_surfaceDestroyed([[maybe_unused]] JNIEnv* env,

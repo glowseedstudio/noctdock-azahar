@@ -1,0 +1,21 @@
+NoctDock Azahar
+================
+
+This repository is a derivative of Azahar / the Citra Emulator Project, licensed
+under the GNU General Public License version 2 (or later). See license.txt in
+this repository for the full license text.
+
+NoctDock-specific changes (3DS top-screen export to a local NoctDock Receiver,
+launch bridge, and related Android/native hooks) are documented in:
+
+  NOCTDOCK_FORK_CHANGELOG.md
+
+The NoctDock Sender and NoctDock Receiver companion apps are separate projects
+and are not included in this tree.
+
+When you distribute builds of this fork, you must comply with GPLv2 for the
+combined emulator binary (provide corresponding source, preserve copyright
+notices, and include license.txt).
+
+Copyright Citra Emulator Project / Azahar Emulator Project
+Licensed under GPLv2 or any later version

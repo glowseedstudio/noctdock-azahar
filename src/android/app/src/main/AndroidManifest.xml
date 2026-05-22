@@ -1,5 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <queries>
+        <package android:name="com.glowseed.noctdock.sender" />
+    </queries>
+
     <uses-feature
         android:name="android.hardware.touchscreen"
         android:required="false"/>
@@ -85,6 +89,10 @@
             android:exported="false"
             android:theme="@style/Theme.Citra.Main"
             android:label="@string/cheats"/>
+
+        <service
+            android:name="org.citra.citra_emu.noctdock.NoctDockBridgeService"
+            android:exported="false" />
     </application>
 
 </manifest>

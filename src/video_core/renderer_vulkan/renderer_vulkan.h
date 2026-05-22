@@ -4,6 +4,8 @@
 
 #pragma once
 
+#include <vector>
+
 #include "common/common_types.h"
 #include "common/math_util.h"
 #include "video_core/renderer_base.h"
@@ -38,6 +40,10 @@ class GPU;
 }
 
 namespace Vulkan {
+
+#ifdef ANDROID
+class NoctDockVulkanEncoderWindow;
+#endif
 
 struct TextureInfo {
     u32 width;
@@ -95,11 +101,17 @@ private:
     void RenderScreenshot();
     void RenderScreenshotWithStagingCopy();
     bool TryRenderScreenshotWithHostMemory();
-    void PrepareDraw(Frame* frame, const Layout::FramebufferLayout& layout);
+#ifdef ANDROID
+    void ExportNoctDockTopScreen();
+    void ReleaseNoctDockExportResources();
+    bool RenderNoctDockTopScreenToEncoderSurface(u32 width, u32 height);
+#endif
+    void PrepareDraw(PresentWindow& window, Frame* frame, const Layout::FramebufferLayout& layout);
     void RenderToWindow(PresentWindow& window, const Layout::FramebufferLayout& layout,
                         bool flipped);
 
-    void DrawScreens(Frame* frame, const Layout::FramebufferLayout& layout, bool flipped);
+    void DrawScreens(PresentWindow& window, Frame* frame, const Layout::FramebufferLayout& layout,
+                     bool flipped);
     void DrawBottomScreen(const Layout::FramebufferLayout& layout,
                           const Common::Rectangle<u32>& bottom_screen);
 
@@ -151,6 +163,19 @@ private:
     vk::ShaderModule cursor_fragment_shader{};
     vk::Pipeline cursor_pipeline{};
     vk::UniquePipelineLayout cursor_pipeline_layout{};
+
+#ifdef ANDROID
+    std::unique_ptr<NoctDockVulkanEncoderWindow> noctdock_encoder_window;
+    std::unique_ptr<PresentWindow> noctdock_present_window_ptr;
+    Frame noctdock_export_frame{};
+    vk::Buffer noctdock_export_staging_buffer{};
+    VmaAllocation noctdock_export_staging_allocation{};
+    void* noctdock_export_staging_mapped_data{};
+    std::vector<u8> noctdock_export_pixels;
+    u32 noctdock_export_width{};
+    u32 noctdock_export_height{};
+    bool noctdock_export_logged_unsupported_format{};
+#endif
 };
 
 } // namespace Vulkan

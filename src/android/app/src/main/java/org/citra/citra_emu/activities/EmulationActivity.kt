@@ -50,7 +50,8 @@ import org.citra.citra_emu.utils.FileBrowserHelper
 import org.citra.citra_emu.utils.EmulationLifecycleUtil
 import org.citra.citra_emu.utils.EmulationMenuSettings
 import org.citra.citra_emu.utils.Log
-import org.citra.citra_emu.utils.RefreshRateUtil
+import org.citra.citra_emu.noctdock.NoctDockBottomScreenAutoDim
+import org.citra.citra_emu.noctdock.NoctDockRefreshRateHelper
 import org.citra.citra_emu.utils.ThemeUtil
 import org.citra.citra_emu.viewmodel.EmulationViewModel
 
@@ -87,8 +88,6 @@ class EmulationActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         requestWindowFeature(Window.FEATURE_NO_TITLE)
-
-        RefreshRateUtil.enforceRefreshRate(this, sixtyHz = true)
 
         ThemeUtil.setTheme(this)
         settingsViewModel.settings.loadSettings()
@@ -172,7 +171,14 @@ class EmulationActivity : AppCompatActivity() {
     // On some devices, the system bars will not disappear on first boot or after some
     // rotations. Here we set full screen immersive repeatedly in onResume and in
     // onWindowFocusChanged to prevent the unwanted status bar state.
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        NoctDockBottomScreenAutoDim.onTouchInteraction(event)
+        return super.dispatchTouchEvent(event)
+    }
+
     override fun onResume() {
+        NoctDockRefreshRateHelper.bindActivity(this)
+        NoctDockBottomScreenAutoDim.bindActivity(this)
         enableFullscreenImmersive()
         if (isEmulationReady) {
             // If emulation is ready then unblock rotation
@@ -184,10 +190,19 @@ class EmulationActivity : AppCompatActivity() {
                 applyOrientationSettings()
             }
         }
+        NoctDockBottomScreenAutoDim.onEmulationResumed()
         super.onResume()
     }
 
+    override fun onPause() {
+        NoctDockBottomScreenAutoDim.onEmulationPaused()
+        super.onPause()
+    }
+
     override fun onStop() {
+        NoctDockBottomScreenAutoDim.clearActivity(this)
+        NoctDockRefreshRateHelper.clearFor3dsMode()
+        NoctDockRefreshRateHelper.clearActivity(this)
         secondaryDisplay.releasePresentation()
         super.onStop()
     }
@@ -218,6 +233,7 @@ class EmulationActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        NoctDockBottomScreenAutoDim.clearActivity(this)
         EmulationLifecycleUtil.removeHook(onShutdown)
         NativeLibrary.playTimeManagerStop()
         isEmulationRunning = false

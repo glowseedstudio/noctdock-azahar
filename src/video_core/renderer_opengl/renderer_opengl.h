@@ -5,6 +5,7 @@
 #pragma once
 
 #include <array>
+#include <vector>
 #include "video_core/renderer_base.h"
 #include "video_core/renderer_opengl/frame_dumper_opengl.h"
 #include "video_core/renderer_opengl/gl_driver.h"
@@ -59,6 +60,7 @@ private:
     void ReloadShader(Settings::StereoRenderOption render_3d);
     void PrepareRendertarget();
     void RenderScreenshot();
+    void ExportNoctDockTopScreen();
     void RenderToMailbox(const Layout::FramebufferLayout& layout,
                          std::unique_ptr<Frontend::TextureMailbox>& mailbox, bool flipped);
     void ConfigureFramebufferTexture(TextureInfo& texture,
@@ -92,7 +94,12 @@ private:
     OGLBuffer vertex_buffer;
     OGLProgram shader;
     OGLFramebuffer screenshot_framebuffer;
+    OGLFramebuffer noctdock_export_framebuffer;
+    OGLTexture noctdock_export_texture;
     std::array<OGLSampler, 2> samplers;
+    u32 noctdock_export_width = 0;
+    u32 noctdock_export_height = 0;
+    std::vector<u8> noctdock_export_pixels;
 
     // Display information for top and bottom screens respectively
     std::array<ScreenInfo, 3> screen_infos;

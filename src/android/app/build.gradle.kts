@@ -62,7 +62,7 @@ android {
     defaultConfig {
         // The application ID refers to Lime3DS to allow for
         // the Play Store listing, which was originally set up for Lime3DS, to still be used.
-        applicationId = "org.azahar_emu.azahar"
+        applicationId = "com.glowseed.noctdock.azahar"
         minSdk = 29
         targetSdk = 35
         versionCode = autoVersion
@@ -173,7 +173,7 @@ android {
         register("googlePlay") {
             dimension = "version"
             versionNameSuffix = "-googleplay"
-            applicationId = "io.github.lime3ds.android"
+            applicationId = "com.glowseed.noctdock.azahar"
         }
     }
 
@@ -211,6 +211,8 @@ dependencies {
     implementation("io.coil-kt:coil:2.7.0")
     implementation("org.ini4j:ini4j:0.5.4")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.2")
+
+    testImplementation("junit:junit:4.13.2")
 }
 
 // Download Vulkan Validation Layers from the KhronosGroup GitHub.
@@ -234,7 +236,9 @@ val unzipVulkanValidationLayers = tasks.register<Copy>("unzipVulkanValidationLay
 }
 
 tasks.named("preBuild") {
-    dependsOn(unzipVulkanValidationLayers)
+    // Vulkan validation layers are a debug aid, not a build input for the APK.
+    // Keep the download task available for developers, but do not let GitHub/DNS
+    // availability block normal debug or release builds.
 }
 
 fun getGitVersion(): String {

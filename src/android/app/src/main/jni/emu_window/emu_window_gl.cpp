@@ -18,7 +18,7 @@
 #include "video_core/gpu.h"
 #include "video_core/renderer_base.h"
 
-static constexpr std::array<EGLint, 15> egl_attribs{EGL_SURFACE_TYPE,
+static constexpr std::array<EGLint, 17> egl_attribs{EGL_SURFACE_TYPE,
                                                     EGL_WINDOW_BIT,
                                                     EGL_RENDERABLE_TYPE,
                                                     EGL_OPENGL_ES3_BIT_KHR,
@@ -32,6 +32,8 @@ static constexpr std::array<EGLint, 15> egl_attribs{EGL_SURFACE_TYPE,
                                                     0,
                                                     EGL_STENCIL_SIZE,
                                                     0,
+                                                    EGL_RECORDABLE_ANDROID,
+                                                    EGL_TRUE,
                                                     EGL_NONE};
 static constexpr std::array<EGLint, 5> egl_empty_attribs{EGL_WIDTH, 1, EGL_HEIGHT, 1, EGL_NONE};
 static constexpr std::array<EGLint, 4> egl_context_attribs{EGL_CONTEXT_CLIENT_VERSION, 3, EGL_NONE};

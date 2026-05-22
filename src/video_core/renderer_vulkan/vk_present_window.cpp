@@ -15,6 +15,10 @@
 
 #include <vk_mem_alloc.h>
 
+#ifdef ANDROID
+extern "C" void NoctDockTopScreenExportNotifySurfaceFrameFromPresent() __attribute__((weak));
+#endif
+
 MICROPROFILE_DEFINE(Vulkan_WaitPresent, "Vulkan", "Wait For Present", MP_RGB(128, 128, 128));
 
 namespace Vulkan {
@@ -98,17 +102,20 @@ bool CanBlitToSwapchain(const vk::PhysicalDevice& physical_device, vk::Format fo
 } // Anonymous namespace
 
 PresentWindow::PresentWindow(Frontend::EmuWindow& emu_window_, const Instance& instance_,
-                             Scheduler& scheduler_, bool low_refresh_rate_)
+                             Scheduler& scheduler_, bool low_refresh_rate_,
+                             bool low_latency_output_)
     : emu_window{emu_window_}, instance{instance_}, scheduler{scheduler_},
-      low_refresh_rate{low_refresh_rate_},
+      low_refresh_rate{low_refresh_rate_}, low_latency_output{low_latency_output_},
       surface{CreateSurface(instance.GetInstance(), emu_window)}, next_surface{surface},
       swapchain{instance, emu_window.GetFramebufferLayout().width,
-                emu_window.GetFramebufferLayout().height, surface, low_refresh_rate_},
+                emu_window.GetFramebufferLayout().height, surface, low_refresh_rate_,
+                low_latency_output_},
       graphics_queue{instance.GetGraphicsQueue()}, present_renderpass{CreateRenderpass()},
       vsync_enabled{Settings::values.use_vsync.GetValue()},
       blit_supported{
           CanBlitToSwapchain(instance.GetPhysicalDevice(), swapchain.GetSurfaceFormat().format)},
-      use_present_thread{Settings::values.async_presentation.GetValue()},
+      use_present_thread{low_latency_output_ ||
+                         Settings::values.async_presentation.GetValue()},
       last_render_surface{emu_window.GetWindowInfo().render_surface} {
 
     const u32 num_images = swapchain.GetImageCount();
@@ -275,6 +282,31 @@ Frame* PresentWindow::GetRenderFrame() {
     return frame;
 }
 
+Frame* PresentWindow::TryGetRenderFrame() {
+    if (!low_latency_output) {
+        return GetRenderFrame();
+    }
+
+    std::unique_lock lock{free_mutex};
+    if (!free_cv.wait_for(lock, std::chrono::microseconds(0),
+                          [this] { return !free_queue.empty(); })) {
+        return nullptr;
+    }
+
+    Frame* frame = free_queue.front();
+    free_queue.pop();
+
+    vk::Device device = instance.GetDevice();
+    if (device.getFenceStatus(frame->present_done) != vk::Result::eSuccess) {
+        free_queue.push(frame);
+        free_cv.notify_one();
+        return nullptr;
+    }
+
+    device.resetFences(frame->present_done);
+    return frame;
+}
+
 void PresentWindow::Present(Frame* frame) {
     if (!use_present_thread) {
         scheduler.WaitWorker();
@@ -339,7 +371,20 @@ void PresentWindow::PresentThread(std::stop_token token) {
 
 void PresentWindow::NotifySurfaceChanged() {
 #ifdef ANDROID
+    void* const render_surface = emu_window.GetWindowInfo().render_surface;
+    if (render_surface == nullptr) {
+        return;
+    }
+    if (render_surface == last_render_surface) {
+        return;
+    }
+    last_render_surface = render_surface;
+
     std::scoped_lock lock{recreate_surface_mutex};
+    if (surface) {
+        instance.GetInstance().destroySurfaceKHR(surface);
+        surface = VK_NULL_HANDLE;
+    }
     next_surface = CreateSurface(instance.GetInstance(), emu_window);
     recreate_surface_cv.notify_one();
 #endif
@@ -484,6 +529,12 @@ void PresentWindow::CopyToSwapchain(Frame* frame) {
     }
 
     swapchain.Present();
+
+#ifdef ANDROID
+    if (low_latency_output && NoctDockTopScreenExportNotifySurfaceFrameFromPresent != nullptr) {
+        NoctDockTopScreenExportNotifySurfaceFrameFromPresent();
+    }
+#endif
 }
 
 vk::RenderPass PresentWindow::CreateRenderpass() {

@@ -16,8 +16,8 @@ MICROPROFILE_DEFINE(Vulkan_Present, "Vulkan", "Swapchain Present", MP_RGB(66, 18
 namespace Vulkan {
 
 Swapchain::Swapchain(const Instance& instance_, u32 width, u32 height, vk::SurfaceKHR surface_,
-                     bool low_refresh_rate)
-    : instance{instance_}, surface{surface_} {
+                     bool low_refresh_rate, bool low_latency_output_)
+    : instance{instance_}, surface{surface_}, low_latency_output{low_latency_output_} {
     FindPresentFormat();
     SetPresentMode();
     Create(width, height, surface, low_refresh_rate);
@@ -192,6 +192,12 @@ void Swapchain::SetPresentMode() {
     present_mode = vk::PresentModeKHR::eFifo;
     const bool has_immediate = find_mode(vk::PresentModeKHR::eImmediate);
     const bool has_mailbox = find_mode(vk::PresentModeKHR::eMailbox);
+    if (low_latency_output) {
+        present_mode = has_mailbox ? vk::PresentModeKHR::eMailbox
+                                   : has_immediate ? vk::PresentModeKHR::eImmediate
+                                                   : vk::PresentModeKHR::eFifo;
+        return;
+    }
     if (!has_immediate && !has_mailbox) {
         LOG_WARNING(Render_Vulkan, "Forcing Fifo present mode as no alternatives are available");
         return;
@@ -241,6 +247,10 @@ void Swapchain::SetSurfaceProperties() {
 
     // Select number of images in swap chain, we prefer one buffer in the background to work on
     image_count = capabilities.minImageCount + 1;
+    if (low_latency_output) {
+        const u32 preferred = std::max(image_count, capabilities.minImageCount + 2);
+        image_count = std::min(preferred, 4u);
+    }
     if (capabilities.maxImageCount > 0) {
         image_count = std::min(image_count, capabilities.maxImageCount);
     }

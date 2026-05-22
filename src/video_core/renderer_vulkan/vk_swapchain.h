@@ -17,7 +17,7 @@ class Scheduler;
 class Swapchain {
 public:
     explicit Swapchain(const Instance& instance, u32 width, u32 height, vk::SurfaceKHR surface,
-                       bool low_refresh_rate);
+                       bool low_refresh_rate, bool low_latency_output = false);
     ~Swapchain();
 
     /// Creates (or recreates) the swapchain with a given size.
@@ -107,6 +107,7 @@ private:
     u32 frame_index = 0;
     bool needs_recreation = true;
     bool low_refresh_rate;
+    bool low_latency_output;
 };
 
 } // namespace Vulkan

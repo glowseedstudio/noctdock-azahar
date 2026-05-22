@@ -74,6 +74,12 @@ import org.citra.citra_emu.features.settings.model.SettingsViewModel
 import org.citra.citra_emu.features.settings.ui.SettingsActivity
 import org.citra.citra_emu.features.settings.utils.SettingsFile
 import org.citra.citra_emu.model.Game
+import org.citra.citra_emu.noctdock.NoctDockBottomScreenAutoDim
+import org.citra.citra_emu.noctdock.NoctDockBridge
+import org.citra.citra_emu.noctdock.NoctDockBridgeSettings
+import org.citra.citra_emu.noctdock.NoctDockExportUnavailableException
+import org.citra.citra_emu.noctdock.NoctDockLaunchRequest
+import org.citra.citra_emu.noctdock.NoctDockTopScreenSource
 import org.citra.citra_emu.utils.BuildUtil
 import org.citra.citra_emu.utils.DirectoryInitialization
 import org.citra.citra_emu.utils.DirectoryInitialization.DirectoryInitializationState
@@ -102,6 +108,9 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback, Choreographer.Fram
 
     private lateinit var game: Game
     private lateinit var screenAdjustmentUtil: ScreenAdjustmentUtil
+    private lateinit var noctDockTopScreenSource: NoctDockTopScreenSource
+    private var noctDockLaunchRequest: NoctDockLaunchRequest? = null
+    private var noctDockPromptHandled = false
 
     private val emulationViewModel: EmulationViewModel by activityViewModels()
     private val settingsViewModel: SettingsViewModel by viewModels()
@@ -179,10 +188,12 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback, Choreographer.Fram
         }
 
         Log.info("[EmulationFragment] Starting application " + game.path)
+        noctDockLaunchRequest = NoctDockBridge.resolveLaunchRequest(requireContext(), intent)
+        noctDockTopScreenSource = NoctDockBridge.createTopScreenSource()
 
         // So this fragment doesn't restart on configuration changes; i.e. rotation.
         retainInstance = true
-        emulationState = EmulationState(game.path)
+        emulationState = EmulationState(game.path, ::shouldDeferEmulationUntilNoctDockReady)
         emulationActivity = requireActivity() as EmulationActivity
         screenAdjustmentUtil = ScreenAdjustmentUtil(requireContext(), requireActivity().windowManager, settings)
         EmulationLifecycleUtil.addPauseResumeHook(onPause)
@@ -523,13 +534,14 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback, Choreographer.Fram
         }
 
         if (DirectoryInitialization.areCitraDirectoriesReady()) {
-            emulationState.run(emulationActivity.isActivityRecreated)
+            startEmulationWithNoctDockPrompt()
         } else {
             setupCitraDirectoriesThenStartEmulation()
         }
     }
 
     override fun onPause() {
+        NoctDockBottomScreenAutoDim.onEmulationPaused()
         if (NativeLibrary.isRunning()) {
             emulationState.pause()
         }
@@ -548,6 +560,9 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback, Choreographer.Fram
         }
         EmulationLifecycleUtil.removeHook(onPause)
         EmulationLifecycleUtil.removeHook(onShutdown)
+        if (::noctDockTopScreenSource.isInitialized && noctDockTopScreenSource.isExporting()) {
+            noctDockTopScreenSource.stopTopScreenExport()
+        }
         if (gameFd != null) {
             ParcelFileDescriptor.adoptFd(gameFd!!).close()
             gameFd = null
@@ -555,12 +570,136 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback, Choreographer.Fram
         super.onDestroy()
     }
 
+    private fun startEmulationWithNoctDockPrompt() {
+        if (noctDockPromptHandled || !::noctDockTopScreenSource.isInitialized) {
+            emulationState.run(emulationActivity.isActivityRecreated)
+            return
+        }
+
+        val bridgeSettings = NoctDockBridgeSettings(requireContext())
+        val launchedFromNoctDock = noctDockLaunchRequest != null
+        val shouldOffer =
+            launchedFromNoctDock &&
+                    bridgeSettings.launchBehavior != NoctDockBridgeSettings.LaunchBehavior.PLAY_NORMALLY
+
+        if (!shouldOffer) {
+            noctDockPromptHandled = true
+            emulationState.run(emulationActivity.isActivityRecreated)
+            return
+        }
+        if (launchedFromNoctDock) {
+            ensureNoctDockExportRendererSettings()
+        }
+
+        if (launchedFromNoctDock &&
+            !noctDockLaunchRequest!!.promptUser &&
+            bridgeSettings.launchBehavior == NoctDockBridgeSettings.LaunchBehavior.ALWAYS_SEND_FROM_NOCTDOCK
+        ) {
+            prepareNoctDockTopScreenExport()
+            noctDockPromptHandled = true
+            emulationState.run(emulationActivity.isActivityRecreated)
+            return
+        }
+
+        MaterialAlertDialogBuilder(requireContext())
+            .setTitle(R.string.noctdock_3ds_mode_prompt_title)
+            .setMessage(
+                "${getString(R.string.noctdock_3ds_mode_description)}\n\n${noctDockRendererStatusText()}"
+            )
+            .setPositiveButton(R.string.noctdock_3ds_mode_send) { _, _ ->
+                prepareNoctDockTopScreenExport()
+                noctDockPromptHandled = true
+                emulationState.run(emulationActivity.isActivityRecreated)
+            }
+            .setNegativeButton(R.string.noctdock_3ds_mode_normal) { _, _ ->
+                noctDockPromptHandled = true
+                emulationState.run(emulationActivity.isActivityRecreated)
+            }
+            .setOnCancelListener {
+                noctDockPromptHandled = true
+                emulationState.run(emulationActivity.isActivityRecreated)
+            }
+            .show()
+    }
+
+    private fun ensureNoctDockExportRendererSettings() {
+        var changed = false
+        if (IntSetting.RENDER_3D_WHICH_DISPLAY.int != NOCTDOCK_STEREO_DISABLED) {
+            IntSetting.RENDER_3D_WHICH_DISPLAY.int = NOCTDOCK_STEREO_DISABLED
+            settings.saveSetting(IntSetting.RENDER_3D_WHICH_DISPLAY, SettingsFile.FILE_NAME_CONFIG)
+            changed = true
+        }
+        if (IntSetting.STEREOSCOPIC_3D_MODE.int != NOCTDOCK_STEREO_DISABLED) {
+            IntSetting.STEREOSCOPIC_3D_MODE.int = NOCTDOCK_STEREO_DISABLED
+            settings.saveSetting(IntSetting.STEREOSCOPIC_3D_MODE, SettingsFile.FILE_NAME_CONFIG)
+            changed = true
+        }
+        if (IntSetting.STEREOSCOPIC_3D_DEPTH.int != NOCTDOCK_STEREO_DISABLED) {
+            IntSetting.STEREOSCOPIC_3D_DEPTH.int = NOCTDOCK_STEREO_DISABLED
+            settings.saveSetting(IntSetting.STEREOSCOPIC_3D_DEPTH, SettingsFile.FILE_NAME_CONFIG)
+            changed = true
+        }
+        if (IntSetting.SCREEN_LAYOUT.int != ScreenLayout.SINGLE_SCREEN.int) {
+            IntSetting.SCREEN_LAYOUT.int = ScreenLayout.SINGLE_SCREEN.int
+            settings.saveSetting(IntSetting.SCREEN_LAYOUT, SettingsFile.FILE_NAME_CONFIG)
+            changed = true
+        }
+        if (!BooleanSetting.SWAP_SCREEN.boolean) {
+            BooleanSetting.SWAP_SCREEN.boolean = true
+            EmulationMenuSettings.swapScreens = true
+            settings.saveSetting(BooleanSetting.SWAP_SCREEN, SettingsFile.FILE_NAME_CONFIG)
+            NativeLibrary.swapScreens(true, requireActivity().windowManager.defaultDisplay.rotation)
+            changed = true
+        }
+        if (changed) {
+            NativeLibrary.reloadSettings()
+            Log.info("[NoctDock] 3DS Mode forced top-screen renderer/layout settings")
+        }
+    }
+
+    private fun noctDockRendererStatusText(): String =
+        when (IntSetting.GRAPHICS_API.int) {
+            NOCTDOCK_OPENGL_GRAPHICS_API -> "Renderer: OpenGL (Stable)"
+            NOCTDOCK_VULKAN_GRAPHICS_API -> "Renderer: Vulkan (Experimental)"
+            else -> "Renderer: Unsupported for NoctDock 3DS Mode"
+        }
+
+    private fun shouldDeferEmulationUntilNoctDockReady(): Boolean =
+        noctDockLaunchRequest != null && !noctDockPromptHandled
+
+    private fun prepareNoctDockTopScreenExport() {
+        runCatching {
+            noctDockTopScreenSource.startTopScreenExport(
+                NoctDockBridge.defaultExportConfig(requireContext(), noctDockLaunchRequest)
+            )
+        }.onFailure { error ->
+            Log.warning("[NoctDock] Top-screen export unavailable: ${error.message}")
+            val message =
+                if (error is NoctDockExportUnavailableException &&
+                    error.message == "NoctDock 3DS Mode currently needs the OpenGL renderer."
+                ) {
+                    error.message.orEmpty()
+                } else if (error is NoctDockExportUnavailableException &&
+                    error.message == "NoctDock screen is not available. Playing normally."
+                ) {
+                    getString(R.string.noctdock_3ds_mode_receiver_unavailable)
+                } else {
+                    getString(R.string.noctdock_3ds_mode_start_failed)
+                }
+            Toast.makeText(
+                requireContext(),
+                message,
+                Toast.LENGTH_SHORT
+            ).show()
+        }
+    }
+
     private fun setupCitraDirectoriesThenStartEmulation() {
         val directoryInitializationState = DirectoryInitialization.start()
         if (directoryInitializationState ===
             DirectoryInitializationState.CITRA_DIRECTORIES_INITIALIZED
         ) {
-            emulationState.run(emulationActivity.isActivityRecreated)
+            startEmulationWithNoctDockPrompt()
         } else if (directoryInitializationState ===
             DirectoryInitializationState.EXTERNAL_STORAGE_PERMISSION_NEEDED
         ) {
@@ -1440,7 +1579,10 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback, Choreographer.Fram
         }
     }
 
-    private class EmulationState(private val gamePath: String) {
+    private class EmulationState(
+        private val gamePath: String,
+        private val shouldDeferSurfaceStart: () -> Boolean
+    ) {
         private var state: State
         private var surface: Surface? = null
 
@@ -1522,7 +1664,7 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback, Choreographer.Fram
         @Synchronized
         fun newSurface(surface: Surface?) {
             this.surface = surface
-            if (this.surface != null) {
+            if (this.surface != null && !shouldDeferSurfaceStart()) {
                 runWithValidSurface()
             }
         }
@@ -1581,6 +1723,9 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback, Choreographer.Fram
     }
 
     companion object {
+        private const val NOCTDOCK_OPENGL_GRAPHICS_API = 1
+        private const val NOCTDOCK_VULKAN_GRAPHICS_API = 2
+        private const val NOCTDOCK_STEREO_DISABLED = 0
         private val perfStatsUpdateHandler = Handler(Looper.myLooper()!!)
     }
 }

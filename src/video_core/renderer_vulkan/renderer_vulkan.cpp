@@ -23,6 +23,10 @@
 #include "video_core/host_shaders/vulkan_cursor_frag.h"
 #include "video_core/host_shaders/vulkan_cursor_vert.h"
 
+#include <algorithm>
+#include <chrono>
+#include <cstring>
+
 #include <vk_mem_alloc.h>
 
 #if defined(__APPLE__) && !defined(HAVE_LIBRETRO)
@@ -35,7 +39,51 @@
 
 MICROPROFILE_DEFINE(Vulkan_RenderFrame, "Vulkan", "Render Frame", MP_RGB(128, 128, 64));
 
+#ifdef ANDROID
+extern "C" bool NoctDockTopScreenExportIsEnabled() __attribute__((weak));
+extern "C" bool NoctDockTopScreenExportShouldCaptureFrame() __attribute__((weak));
+extern "C" bool NoctDockTopScreenExportUsesEncoderSurface() __attribute__((weak));
+extern "C" void* NoctDockTopScreenExportEncoderWindow() __attribute__((weak));
+extern "C" int NoctDockTopScreenExportWidth() __attribute__((weak));
+extern "C" int NoctDockTopScreenExportHeight() __attribute__((weak));
+extern "C" void NoctDockTopScreenExportSubmitFrame(const u8* rgba, int width, int height,
+                                                   s64 readback_time_us,
+                                                   s64 export_time_us) __attribute__((weak));
+extern "C" void NoctDockTopScreenExportReportFailure(const char* message) __attribute__((weak));
+extern "C" void NoctDockTopScreenExportNotifySurfaceFrame(s64 export_time_us)
+    __attribute__((weak));
+extern "C" void NoctDockTopScreenExportFallbackToReadback(const char* message)
+    __attribute__((weak));
+#endif
+
 namespace Vulkan {
+
+#ifdef ANDROID
+class NoctDockVulkanEncoderWindow final : public Frontend::EmuWindow {
+public:
+    NoctDockVulkanEncoderWindow(void* surface, u32 width, u32 height) : EmuWindow(false) {
+        window_info.type = Frontend::WindowSystemType::Android;
+        window_info.render_surface = surface;
+        Update(width, height, surface);
+    }
+
+    void Update(u32 width, u32 height, void* surface) {
+        window_info.render_surface = surface;
+        Layout::FramebufferLayout layout{};
+        layout.width = width;
+        layout.height = height;
+        layout.top_screen_enabled = true;
+        layout.bottom_screen_enabled = false;
+        layout.top_screen = {0, 0, width, height};
+        layout.bottom_screen = {0, 0, 0, 0};
+        layout.is_rotated = true;
+        layout.render_3d_mode = Settings::StereoRenderOption::Off;
+        NotifyFramebufferLayoutChanged(layout);
+    }
+
+    void PollEvents() override {}
+};
+#endif
 
 struct ScreenRectVertex {
     ScreenRectVertex() = default;
@@ -142,6 +190,10 @@ RendererVulkan::~RendererVulkan() {
     main_present_window.WaitPresent();
     device.waitIdle();
 
+#ifdef ANDROID
+    ReleaseNoctDockExportResources();
+#endif
+
     device.destroyShaderModule(present_vertex_shader);
     for (u32 i = 0; i < PRESENT_PIPELINES; i++) {
         device.destroyPipeline(present_pipelines[i]);
@@ -186,7 +238,8 @@ void RendererVulkan::PrepareRendertarget() {
     }
 }
 
-void RendererVulkan::PrepareDraw(Frame* frame, const Layout::FramebufferLayout& layout) {
+void RendererVulkan::PrepareDraw(PresentWindow& window, Frame* frame,
+                                 const Layout::FramebufferLayout& layout) {
     const auto sampler = present_samplers[!Settings::values.filter_mode.GetValue()];
     const auto present_set = present_heap.Commit();
     for (u32 index = 0; index < screen_infos.size(); index++) {
@@ -196,7 +249,7 @@ void RendererVulkan::PrepareDraw(Frame* frame, const Layout::FramebufferLayout& 
 
     renderpass_cache.EndRendering();
     scheduler.Record([this, layout, frame, present_set,
-                      renderpass = main_present_window.Renderpass(),
+                      renderpass = window.Renderpass(),
                       index = current_pipeline](vk::CommandBuffer cmdbuf) {
         const vk::Viewport viewport = {
             .x = 0.0f,
@@ -250,7 +303,7 @@ void RendererVulkan::RenderToWindow(PresentWindow& window, const Layout::Framebu
     clear_color.float32[2] = Settings::values.bg_blue.GetValue();
     clear_color.float32[3] = 1.0f;
 
-    DrawScreens(frame, layout, flipped);
+    DrawScreens(window, frame, layout, flipped);
     scheduler.Flush(frame->render_ready);
 
     window.Present(frame);
@@ -997,8 +1050,8 @@ void RendererVulkan::DrawBottomScreen(const Layout::FramebufferLayout& layout,
     }
 }
 
-void RendererVulkan::DrawScreens(Frame* frame, const Layout::FramebufferLayout& layout,
-                                 bool flipped) {
+void RendererVulkan::DrawScreens(PresentWindow& window, Frame* frame,
+                                 const Layout::FramebufferLayout& layout, bool flipped) {
     if (settings.bg_color_update_requested.exchange(false)) {
         clear_color.float32[0] = Settings::values.bg_red.GetValue();
         clear_color.float32[1] = Settings::values.bg_green.GetValue();
@@ -1008,7 +1061,7 @@ void RendererVulkan::DrawScreens(Frame* frame, const Layout::FramebufferLayout& 
         ReloadPipeline(layout.render_3d_mode);
     }
 
-    PrepareDraw(frame, layout);
+    PrepareDraw(window, frame, layout);
 
     const auto& top_screen = layout.top_screen;
     const auto& bottom_screen = layout.bottom_screen;
@@ -1115,6 +1168,9 @@ void RendererVulkan::SwapBuffers() {
     PrepareRendertarget();
     RenderScreenshot();
     RenderToWindow(main_present_window, layout, false);
+#ifdef ANDROID
+    ExportNoctDockTopScreen();
+#endif
 #ifndef ANDROID
     if (Settings::values.layout_option.GetValue() == Settings::LayoutOption::SeparateWindows) {
         ASSERT(secondary_window);
@@ -1144,6 +1200,315 @@ void RendererVulkan::SwapBuffers() {
     rasterizer.TickFrame();
     EndFrame();
 }
+
+#ifdef ANDROID
+void RendererVulkan::ReleaseNoctDockExportResources() {
+    const vk::Device device = instance.GetDevice();
+    if (noctdock_export_frame.framebuffer) {
+        device.destroyFramebuffer(noctdock_export_frame.framebuffer);
+        noctdock_export_frame.framebuffer = nullptr;
+    }
+    if (noctdock_export_frame.image_view) {
+        device.destroyImageView(noctdock_export_frame.image_view);
+        noctdock_export_frame.image_view = nullptr;
+    }
+    if (noctdock_export_frame.image) {
+        vmaDestroyImage(instance.GetAllocator(), noctdock_export_frame.image,
+                        noctdock_export_frame.allocation);
+        noctdock_export_frame.image = nullptr;
+        noctdock_export_frame.allocation = {};
+    }
+    if (noctdock_export_staging_buffer) {
+        vmaDestroyBuffer(instance.GetAllocator(), noctdock_export_staging_buffer,
+                         noctdock_export_staging_allocation);
+        noctdock_export_staging_buffer = nullptr;
+        noctdock_export_staging_allocation = {};
+        noctdock_export_staging_mapped_data = nullptr;
+    }
+    noctdock_export_pixels.clear();
+    noctdock_export_width = 0;
+    noctdock_export_height = 0;
+    noctdock_export_logged_unsupported_format = false;
+    noctdock_present_window_ptr.reset();
+    noctdock_encoder_window.reset();
+}
+
+bool RendererVulkan::RenderNoctDockTopScreenToEncoderSurface(u32 width, u32 height) {
+    if (NoctDockTopScreenExportEncoderWindow == nullptr ||
+        NoctDockTopScreenExportNotifySurfaceFrame == nullptr) {
+        return false;
+    }
+    void* encoder_surface = NoctDockTopScreenExportEncoderWindow();
+    if (encoder_surface == nullptr) {
+        return false;
+    }
+
+    if (!noctdock_encoder_window) {
+        noctdock_encoder_window =
+            std::make_unique<NoctDockVulkanEncoderWindow>(encoder_surface, width, height);
+        noctdock_present_window_ptr = std::make_unique<PresentWindow>(
+            *noctdock_encoder_window, instance, scheduler, IsLowRefreshRate(), true);
+        LOG_INFO(Render_Vulkan,
+                 "NoctDock Vulkan encoder surface target prepared {}x{} (low-latency present, {} "
+                 "swapchain images)",
+                 width, height, noctdock_present_window_ptr->ImageCount());
+    } else {
+        const void* previous_surface = noctdock_encoder_window->GetWindowInfo().render_surface;
+        noctdock_encoder_window->Update(width, height, encoder_surface);
+        if (previous_surface != encoder_surface && noctdock_present_window_ptr) {
+            noctdock_present_window_ptr->NotifySurfaceChanged();
+        }
+    }
+
+    if (!noctdock_present_window_ptr) {
+        return false;
+    }
+
+    Frame* frame = noctdock_present_window_ptr->TryGetRenderFrame();
+    if (frame == nullptr) {
+        return false;
+    }
+    if (frame->width != width || frame->height != height) {
+        noctdock_present_window_ptr->WaitPresent();
+        scheduler.Finish();
+        noctdock_present_window_ptr->RecreateFrame(frame, width, height);
+    }
+
+    Layout::FramebufferLayout export_layout{};
+    export_layout.width = width;
+    export_layout.height = height;
+    export_layout.top_screen_enabled = true;
+    export_layout.bottom_screen_enabled = false;
+    export_layout.top_screen = {0, 0, width, height};
+    export_layout.bottom_screen = {0, 0, 0, 0};
+    export_layout.is_rotated = true;
+    export_layout.render_3d_mode = Settings::StereoRenderOption::Off;
+
+    const u32 previous_pipeline = current_pipeline;
+    current_pipeline = 0;
+    clear_color.float32[0] = 0.0f;
+    clear_color.float32[1] = 0.0f;
+    clear_color.float32[2] = 0.0f;
+    clear_color.float32[3] = 1.0f;
+    PrepareDraw(*noctdock_present_window_ptr, frame, export_layout);
+    draw_info.modelview = MakeOrthographicMatrix(width, height);
+    draw_info.layer = 0;
+    draw_info.screen_id_l = 0;
+    draw_info.screen_id_r = 0;
+    ApplySecondLayerOpacity(1.0f);
+    DrawSingleScreen(0, 0.0f, 0.0f, static_cast<float>(width), static_cast<float>(height),
+                     Layout::DisplayOrientation::Landscape);
+    scheduler.Record([](vk::CommandBuffer cmdbuf) { cmdbuf.endRenderPass(); });
+    current_pipeline = previous_pipeline;
+    scheduler.Flush(frame->render_ready);
+    noctdock_present_window_ptr->Present(frame);
+    return true;
+}
+
+void RendererVulkan::ExportNoctDockTopScreen() {
+    const auto export_started = std::chrono::steady_clock::now();
+    if (NoctDockTopScreenExportIsEnabled == nullptr ||
+        NoctDockTopScreenExportShouldCaptureFrame == nullptr ||
+        NoctDockTopScreenExportWidth == nullptr ||
+        NoctDockTopScreenExportHeight == nullptr ||
+        NoctDockTopScreenExportSubmitFrame == nullptr) {
+        return;
+    }
+    if (!NoctDockTopScreenExportIsEnabled()) {
+        if (noctdock_export_frame.image || noctdock_export_staging_buffer) {
+            scheduler.Finish();
+            ReleaseNoctDockExportResources();
+            LOG_INFO(Render_Vulkan, "NoctDock top-screen export Vulkan resources released");
+        }
+        return;
+    }
+    if (!NoctDockTopScreenExportShouldCaptureFrame() || !screen_infos[0].image_view) {
+        return;
+    }
+
+    const u32 width = static_cast<u32>(std::max(1, NoctDockTopScreenExportWidth()));
+    const u32 height = static_cast<u32>(std::max(1, NoctDockTopScreenExportHeight()));
+    const bool use_encoder_surface =
+        NoctDockTopScreenExportUsesEncoderSurface != nullptr &&
+        NoctDockTopScreenExportUsesEncoderSurface();
+    if (use_encoder_surface) {
+        try {
+            if (RenderNoctDockTopScreenToEncoderSurface(width, height)) {
+                return;
+            }
+        } catch (const std::exception& error) {
+            LOG_WARNING(Render_Vulkan, "NoctDock Vulkan encoder surface export failed: {}",
+                        error.what());
+        }
+        if (NoctDockTopScreenExportFallbackToReadback != nullptr) {
+            NoctDockTopScreenExportFallbackToReadback(
+                "Using compatibility export mode.");
+        }
+        return;
+    }
+    const vk::Device device = instance.GetDevice();
+    const vk::DeviceSize byte_count = static_cast<vk::DeviceSize>(width) * height * 4;
+
+    if (noctdock_export_width != width || noctdock_export_height != height ||
+        !noctdock_export_frame.image || !noctdock_export_staging_buffer) {
+        scheduler.Finish();
+        ReleaseNoctDockExportResources();
+        main_present_window.RecreateFrame(&noctdock_export_frame, width, height);
+
+        const vk::BufferCreateInfo staging_buffer_info = {
+            .size = byte_count,
+            .usage = vk::BufferUsageFlagBits::eTransferDst,
+        };
+        const VmaAllocationCreateInfo alloc_create_info = {
+            .flags = VMA_ALLOCATION_CREATE_WITHIN_BUDGET_BIT |
+                     VMA_ALLOCATION_CREATE_MAPPED_BIT |
+                     VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT,
+            .usage = VMA_MEMORY_USAGE_AUTO_PREFER_HOST,
+            .requiredFlags = 0,
+            .preferredFlags = 0,
+            .pool = VK_NULL_HANDLE,
+            .pUserData = nullptr,
+        };
+        VkBuffer unsafe_buffer{};
+        VmaAllocationInfo alloc_info{};
+        VkBufferCreateInfo unsafe_buffer_info = static_cast<VkBufferCreateInfo>(staging_buffer_info);
+        const VkResult result = vmaCreateBuffer(instance.GetAllocator(), &unsafe_buffer_info,
+                                                &alloc_create_info, &unsafe_buffer,
+                                                &noctdock_export_staging_allocation, &alloc_info);
+        if (result != VK_SUCCESS) {
+            LOG_WARNING(Render_Vulkan, "NoctDock Vulkan export staging allocation failed: {}",
+                        result);
+            if (NoctDockTopScreenExportReportFailure != nullptr) {
+                NoctDockTopScreenExportReportFailure(
+                    "NoctDock Vulkan export could not start. Playing normally.");
+            }
+            return;
+        }
+        noctdock_export_staging_buffer = vk::Buffer{unsafe_buffer};
+        noctdock_export_staging_mapped_data = alloc_info.pMappedData;
+        noctdock_export_pixels.resize(static_cast<std::size_t>(byte_count));
+        noctdock_export_width = width;
+        noctdock_export_height = height;
+        LOG_INFO(Render_Vulkan, "NoctDock experimental Vulkan export target {}x{} prepared",
+                 width, height);
+    }
+
+    const u32 previous_pipeline = current_pipeline;
+    try {
+        current_pipeline = 0;
+        Layout::FramebufferLayout export_layout{};
+        export_layout.width = width;
+        export_layout.height = height;
+        export_layout.top_screen_enabled = true;
+        export_layout.bottom_screen_enabled = false;
+        export_layout.top_screen = {0, 0, width, height};
+        export_layout.bottom_screen = {0, 0, 0, 0};
+        export_layout.is_rotated = true;
+        export_layout.render_3d_mode = Settings::StereoRenderOption::Off;
+
+        clear_color.float32[0] = 0.0f;
+        clear_color.float32[1] = 0.0f;
+        clear_color.float32[2] = 0.0f;
+        clear_color.float32[3] = 1.0f;
+        PrepareDraw(main_present_window, &noctdock_export_frame, export_layout);
+        draw_info.modelview = MakeOrthographicMatrix(width, height);
+        draw_info.layer = 0;
+        draw_info.screen_id_l = 0;
+        draw_info.screen_id_r = 0;
+        ApplySecondLayerOpacity(1.0f);
+        DrawSingleScreen(0, 0.0f, 0.0f, static_cast<float>(width), static_cast<float>(height),
+                         Layout::DisplayOrientation::Landscape);
+        scheduler.Record([](vk::CommandBuffer cmdbuf) { cmdbuf.endRenderPass(); });
+        current_pipeline = previous_pipeline;
+
+        const auto readback_started = std::chrono::steady_clock::now();
+        scheduler.Record([width, height, source_image = noctdock_export_frame.image,
+                          staging_buffer = noctdock_export_staging_buffer](vk::CommandBuffer cmdbuf) {
+            const vk::ImageMemoryBarrier read_barrier = {
+                .srcAccessMask = vk::AccessFlagBits::eMemoryWrite,
+                .dstAccessMask = vk::AccessFlagBits::eTransferRead,
+                .oldLayout = vk::ImageLayout::eTransferSrcOptimal,
+                .newLayout = vk::ImageLayout::eTransferSrcOptimal,
+                .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                .image = source_image,
+                .subresourceRange{
+                    .aspectMask = vk::ImageAspectFlagBits::eColor,
+                    .baseMipLevel = 0,
+                    .levelCount = 1,
+                    .baseArrayLayer = 0,
+                    .layerCount = 1,
+                },
+            };
+            static constexpr vk::MemoryBarrier memory_write_barrier = {
+                .srcAccessMask = vk::AccessFlagBits::eMemoryWrite,
+                .dstAccessMask = vk::AccessFlagBits::eMemoryRead | vk::AccessFlagBits::eMemoryWrite,
+            };
+            const vk::BufferImageCopy image_copy = {
+                .bufferOffset = 0,
+                .bufferRowLength = 0,
+                .bufferImageHeight = 0,
+                .imageSubresource =
+                    {
+                        .aspectMask = vk::ImageAspectFlagBits::eColor,
+                        .mipLevel = 0,
+                        .baseArrayLayer = 0,
+                        .layerCount = 1,
+                    },
+                .imageOffset = {0, 0, 0},
+                .imageExtent = {width, height, 1},
+            };
+
+            cmdbuf.pipelineBarrier(vk::PipelineStageFlagBits::eAllCommands,
+                                   vk::PipelineStageFlagBits::eTransfer,
+                                   vk::DependencyFlagBits::eByRegion, {}, {}, read_barrier);
+            cmdbuf.copyImageToBuffer(source_image, vk::ImageLayout::eTransferSrcOptimal,
+                                     staging_buffer, image_copy);
+            cmdbuf.pipelineBarrier(vk::PipelineStageFlagBits::eTransfer,
+                                   vk::PipelineStageFlagBits::eAllCommands,
+                                   vk::DependencyFlagBits::eByRegion, memory_write_barrier, {}, {});
+        });
+        scheduler.Finish();
+        const auto readback_finished = std::chrono::steady_clock::now();
+
+        std::memcpy(noctdock_export_pixels.data(), noctdock_export_staging_mapped_data,
+                    static_cast<std::size_t>(byte_count));
+        const vk::Format export_format = main_present_window.SurfaceFormat();
+        if (export_format == vk::Format::eB8G8R8A8Unorm ||
+            export_format == vk::Format::eB8G8R8A8Srgb) {
+            for (std::size_t i = 0; i + 2 < noctdock_export_pixels.size(); i += 4) {
+                std::swap(noctdock_export_pixels[i], noctdock_export_pixels[i + 2]);
+            }
+        } else if (export_format != vk::Format::eR8G8B8A8Unorm &&
+                   export_format != vk::Format::eR8G8B8A8Srgb &&
+                   !noctdock_export_logged_unsupported_format) {
+            noctdock_export_logged_unsupported_format = true;
+            LOG_WARNING(Render_Vulkan,
+                        "NoctDock Vulkan export using unverified surface format {}",
+                        vk::to_string(export_format));
+        }
+
+        const s64 readback_time_us =
+            std::chrono::duration_cast<std::chrono::microseconds>(readback_finished -
+                                                                  readback_started)
+                .count();
+        const s64 export_time_us =
+            std::chrono::duration_cast<std::chrono::microseconds>(readback_finished -
+                                                                  export_started)
+                .count();
+        NoctDockTopScreenExportSubmitFrame(noctdock_export_pixels.data(), static_cast<int>(width),
+                                           static_cast<int>(height), readback_time_us,
+                                           export_time_us);
+    } catch (const std::exception& error) {
+        current_pipeline = previous_pipeline;
+        LOG_WARNING(Render_Vulkan, "NoctDock Vulkan export failed: {}", error.what());
+        if (NoctDockTopScreenExportReportFailure != nullptr) {
+            NoctDockTopScreenExportReportFailure(
+                "NoctDock Vulkan export could not start. Playing normally.");
+        }
+    }
+}
+#endif
 
 void RendererVulkan::RenderScreenshot() {
     if (!settings.screenshot_requested.exchange(false)) {
@@ -1196,7 +1561,7 @@ void RendererVulkan::RenderScreenshotWithStagingCopy() {
     Frame frame{};
     main_present_window.RecreateFrame(&frame, width, height);
 
-    DrawScreens(&frame, layout, false);
+    DrawScreens(main_present_window, &frame, layout, false);
 
     scheduler.Record(
         [width, height, source_image = frame.image, staging_buffer](vk::CommandBuffer cmdbuf) {
@@ -1369,7 +1734,7 @@ bool RendererVulkan::TryRenderScreenshotWithHostMemory() {
     Frame frame{};
     main_present_window.RecreateFrame(&frame, width, height);
 
-    DrawScreens(&frame, layout, false);
+    DrawScreens(main_present_window, &frame, layout, false);
 
     scheduler.Record([buffer_image_copy, source_image = frame.image,
                       imported_buffer = imported_buffer.get()](vk::CommandBuffer cmdbuf) {
