@@ -77,7 +77,7 @@ You can also enable **NoctDock 3DS Mode** inside Azahar after a normal launch, o
 | **Normal Azahar** | Still runs as a full emulator when NoctDock export is off. |
 | **Stream Watch** | Optional LAN-only debug metrics when enabled (no cloud telemetry). |
 
-The export path is moving toward **direct render into the encoder surface** where possible, instead of slow full-frame readback.
+Where supported, the fork renders directly into an encoder surface for better performance, with compatibility fallbacks when needed.
 
 ---
 
@@ -106,6 +106,12 @@ Copyright Citra Emulator Project / Azahar Emulator Project — see [NOTICE](NOTI
 In active development. Fork source is in this repository; debug and release APKs are published on [**Releases**](https://github.com/glowseedstudio/noctdock-azahar/releases/latest) when tagged.
 
 For integration detail and testing checklists, see the main NoctDock repo: [`NOCTDOCK_AZAHAR_INTEGRATION.md`](https://github.com/glowseedstudio/noctdock/blob/main/NOCTDOCK_AZAHAR_INTEGRATION.md), [`NOCTDOCK_AZAHAR_TESTING.md`](https://github.com/glowseedstudio/noctdock/blob/main/NOCTDOCK_AZAHAR_TESTING.md).
+
+---
+
+## Known limitations
+
+NoctDock Azahar is experimental. Export performance can vary by renderer, device, game, codec, and receiver. Some paths may fall back to compatibility mode if direct encoder-surface export is not available.
 
 ---
 
