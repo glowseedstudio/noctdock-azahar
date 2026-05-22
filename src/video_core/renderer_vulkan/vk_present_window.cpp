@@ -107,15 +107,17 @@ PresentWindow::PresentWindow(Frontend::EmuWindow& emu_window_, const Instance& i
     : emu_window{emu_window_}, instance{instance_}, scheduler{scheduler_},
       low_refresh_rate{low_refresh_rate_}, low_latency_output{low_latency_output_},
       surface{CreateSurface(instance.GetInstance(), emu_window)}, next_surface{surface},
-      swapchain{instance, emu_window.GetFramebufferLayout().width,
-                emu_window.GetFramebufferLayout().height, surface, low_refresh_rate_,
+      swapchain{instance,
+                emu_window.GetFramebufferLayout().width,
+                emu_window.GetFramebufferLayout().height,
+                surface,
+                low_refresh_rate_,
                 low_latency_output_},
       graphics_queue{instance.GetGraphicsQueue()}, present_renderpass{CreateRenderpass()},
       vsync_enabled{Settings::values.use_vsync.GetValue()},
       blit_supported{
           CanBlitToSwapchain(instance.GetPhysicalDevice(), swapchain.GetSurfaceFormat().format)},
-      use_present_thread{low_latency_output_ ||
-                         Settings::values.async_presentation.GetValue()},
+      use_present_thread{low_latency_output_ || Settings::values.async_presentation.GetValue()},
       last_render_surface{emu_window.GetWindowInfo().render_surface} {
 
     const u32 num_images = swapchain.GetImageCount();

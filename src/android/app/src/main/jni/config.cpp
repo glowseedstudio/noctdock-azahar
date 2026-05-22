@@ -343,9 +343,8 @@ void Config::Reload() {
             DefaultINI::android_config_omitted_keys,
             [key](const auto& omitted) { return std::string(omitted) == std::string(*key); });
         // FIXME: This code looks so ass when formatted by clang-format -OS
-        if (!omitted_key &&
-            std::string(DefaultINI::android_config_default_file_content)
-                    .find(key_declaration_string) == std::string::npos) {
+        if (!omitted_key && std::string(DefaultINI::android_config_default_file_content)
+                                    .find(key_declaration_string) == std::string::npos) {
             ASSERT_MSG(false,
                        "Validation of default content config failed: Missing or malformed key "
                        "declaration {}",

@@ -47,11 +47,10 @@ extern "C" void* NoctDockTopScreenExportEncoderWindow() __attribute__((weak));
 extern "C" int NoctDockTopScreenExportWidth() __attribute__((weak));
 extern "C" int NoctDockTopScreenExportHeight() __attribute__((weak));
 extern "C" void NoctDockTopScreenExportSubmitFrame(const u8* rgba, int width, int height,
-                                                   s64 readback_time_us,
-                                                   s64 export_time_us) __attribute__((weak));
-extern "C" void NoctDockTopScreenExportReportFailure(const char* message) __attribute__((weak));
-extern "C" void NoctDockTopScreenExportNotifySurfaceFrame(s64 export_time_us)
+                                                   s64 readback_time_us, s64 export_time_us)
     __attribute__((weak));
+extern "C" void NoctDockTopScreenExportReportFailure(const char* message) __attribute__((weak));
+extern "C" void NoctDockTopScreenExportNotifySurfaceFrame(s64 export_time_us) __attribute__((weak));
 extern "C" void NoctDockTopScreenExportFallbackToReadback(const char* message)
     __attribute__((weak));
 #endif
@@ -248,8 +247,7 @@ void RendererVulkan::PrepareDraw(PresentWindow& window, Frame* frame,
     }
 
     renderpass_cache.EndRendering();
-    scheduler.Record([this, layout, frame, present_set,
-                      renderpass = window.Renderpass(),
+    scheduler.Record([this, layout, frame, present_set, renderpass = window.Renderpass(),
                       index = current_pipeline](vk::CommandBuffer cmdbuf) {
         const vk::Viewport viewport = {
             .x = 0.0f,
@@ -1309,8 +1307,7 @@ void RendererVulkan::ExportNoctDockTopScreen() {
     const auto export_started = std::chrono::steady_clock::now();
     if (NoctDockTopScreenExportIsEnabled == nullptr ||
         NoctDockTopScreenExportShouldCaptureFrame == nullptr ||
-        NoctDockTopScreenExportWidth == nullptr ||
-        NoctDockTopScreenExportHeight == nullptr ||
+        NoctDockTopScreenExportWidth == nullptr || NoctDockTopScreenExportHeight == nullptr ||
         NoctDockTopScreenExportSubmitFrame == nullptr) {
         return;
     }
@@ -1328,9 +1325,8 @@ void RendererVulkan::ExportNoctDockTopScreen() {
 
     const u32 width = static_cast<u32>(std::max(1, NoctDockTopScreenExportWidth()));
     const u32 height = static_cast<u32>(std::max(1, NoctDockTopScreenExportHeight()));
-    const bool use_encoder_surface =
-        NoctDockTopScreenExportUsesEncoderSurface != nullptr &&
-        NoctDockTopScreenExportUsesEncoderSurface();
+    const bool use_encoder_surface = NoctDockTopScreenExportUsesEncoderSurface != nullptr &&
+                                     NoctDockTopScreenExportUsesEncoderSurface();
     if (use_encoder_surface) {
         try {
             if (RenderNoctDockTopScreenToEncoderSurface(width, height)) {
@@ -1341,8 +1337,7 @@ void RendererVulkan::ExportNoctDockTopScreen() {
                         error.what());
         }
         if (NoctDockTopScreenExportFallbackToReadback != nullptr) {
-            NoctDockTopScreenExportFallbackToReadback(
-                "Using compatibility export mode.");
+            NoctDockTopScreenExportFallbackToReadback("Using compatibility export mode.");
         }
         return;
     }
@@ -1360,8 +1355,7 @@ void RendererVulkan::ExportNoctDockTopScreen() {
             .usage = vk::BufferUsageFlagBits::eTransferDst,
         };
         const VmaAllocationCreateInfo alloc_create_info = {
-            .flags = VMA_ALLOCATION_CREATE_WITHIN_BUDGET_BIT |
-                     VMA_ALLOCATION_CREATE_MAPPED_BIT |
+            .flags = VMA_ALLOCATION_CREATE_WITHIN_BUDGET_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT |
                      VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT,
             .usage = VMA_MEMORY_USAGE_AUTO_PREFER_HOST,
             .requiredFlags = 0,
@@ -1371,10 +1365,11 @@ void RendererVulkan::ExportNoctDockTopScreen() {
         };
         VkBuffer unsafe_buffer{};
         VmaAllocationInfo alloc_info{};
-        VkBufferCreateInfo unsafe_buffer_info = static_cast<VkBufferCreateInfo>(staging_buffer_info);
-        const VkResult result = vmaCreateBuffer(instance.GetAllocator(), &unsafe_buffer_info,
-                                                &alloc_create_info, &unsafe_buffer,
-                                                &noctdock_export_staging_allocation, &alloc_info);
+        VkBufferCreateInfo unsafe_buffer_info =
+            static_cast<VkBufferCreateInfo>(staging_buffer_info);
+        const VkResult result =
+            vmaCreateBuffer(instance.GetAllocator(), &unsafe_buffer_info, &alloc_create_info,
+                            &unsafe_buffer, &noctdock_export_staging_allocation, &alloc_info);
         if (result != VK_SUCCESS) {
             LOG_WARNING(Render_Vulkan, "NoctDock Vulkan export staging allocation failed: {}",
                         result);
@@ -1389,8 +1384,8 @@ void RendererVulkan::ExportNoctDockTopScreen() {
         noctdock_export_pixels.resize(static_cast<std::size_t>(byte_count));
         noctdock_export_width = width;
         noctdock_export_height = height;
-        LOG_INFO(Render_Vulkan, "NoctDock experimental Vulkan export target {}x{} prepared",
-                 width, height);
+        LOG_INFO(Render_Vulkan, "NoctDock experimental Vulkan export target {}x{} prepared", width,
+                 height);
     }
 
     const u32 previous_pipeline = current_pipeline;
@@ -1423,7 +1418,8 @@ void RendererVulkan::ExportNoctDockTopScreen() {
 
         const auto readback_started = std::chrono::steady_clock::now();
         scheduler.Record([width, height, source_image = noctdock_export_frame.image,
-                          staging_buffer = noctdock_export_staging_buffer](vk::CommandBuffer cmdbuf) {
+                          staging_buffer =
+                              noctdock_export_staging_buffer](vk::CommandBuffer cmdbuf) {
             const vk::ImageMemoryBarrier read_barrier = {
                 .srcAccessMask = vk::AccessFlagBits::eMemoryWrite,
                 .dstAccessMask = vk::AccessFlagBits::eTransferRead,
@@ -1483,19 +1479,16 @@ void RendererVulkan::ExportNoctDockTopScreen() {
                    export_format != vk::Format::eR8G8B8A8Srgb &&
                    !noctdock_export_logged_unsupported_format) {
             noctdock_export_logged_unsupported_format = true;
-            LOG_WARNING(Render_Vulkan,
-                        "NoctDock Vulkan export using unverified surface format {}",
+            LOG_WARNING(Render_Vulkan, "NoctDock Vulkan export using unverified surface format {}",
                         vk::to_string(export_format));
         }
 
-        const s64 readback_time_us =
-            std::chrono::duration_cast<std::chrono::microseconds>(readback_finished -
-                                                                  readback_started)
-                .count();
-        const s64 export_time_us =
-            std::chrono::duration_cast<std::chrono::microseconds>(readback_finished -
-                                                                  export_started)
-                .count();
+        const s64 readback_time_us = std::chrono::duration_cast<std::chrono::microseconds>(
+                                         readback_finished - readback_started)
+                                         .count();
+        const s64 export_time_us = std::chrono::duration_cast<std::chrono::microseconds>(
+                                       readback_finished - export_started)
+                                       .count();
         NoctDockTopScreenExportSubmitFrame(noctdock_export_pixels.data(), static_cast<int>(width),
                                            static_cast<int>(height), readback_time_us,
                                            export_time_us);

@@ -9,10 +9,10 @@
 #include <thread>
 #include <dlfcn.h>
 
-#include <android/api-level.h>
-#include <android/native_window_jni.h>
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
+#include <android/api-level.h>
+#include <android/native_window_jni.h>
 #include <core/hw/aes/key.h>
 #include <core/loader/smdh.h>
 #include <core/system_titles.h>
@@ -192,8 +192,7 @@ extern "C" bool NoctDockTopScreenExportBeginEncoderSurface(int width, int height
     s_noctdock_previous_read_surface = eglGetCurrentSurface(EGL_READ);
     s_noctdock_previous_context = context;
     if (s_noctdock_encoder_egl_surface == EGL_NO_SURFACE ||
-        s_noctdock_encoder_surface_width != width ||
-        s_noctdock_encoder_surface_height != height) {
+        s_noctdock_encoder_surface_width != width || s_noctdock_encoder_surface_height != height) {
         NoctDockTopScreenExportReleaseEncoderSurface();
         EGLint config_id{};
         EGLConfig current_config{};
@@ -211,8 +210,8 @@ extern "C" bool NoctDockTopScreenExportBeginEncoderSurface(int width, int height
         EGLint recordable{};
         eglGetConfigAttrib(display, current_config, EGL_RECORDABLE_ANDROID, &recordable);
         if (recordable != EGL_TRUE) {
-            LOG_WARNING(Frontend,
-                        "NoctDock encoder EGL config is not recordable; MediaCodec surface may reject frames");
+            LOG_WARNING(Frontend, "NoctDock encoder EGL config is not recordable; MediaCodec "
+                                  "surface may reject frames");
         }
         ANativeWindow_setBuffersGeometry(s_noctdock_encoder_window, width, height, format);
         s_noctdock_encoder_egl_surface =
@@ -337,8 +336,8 @@ extern "C" void NoctDockTopScreenExportSubmitFrame(const u8* rgba, int width, in
 
     JNIEnv* env = IDCache::GetEnvForThread();
     if (s_noctdock_frame_callback == nullptr) {
-        s_noctdock_frame_callback = env->GetStaticMethodID(IDCache::GetNativeLibraryClass(),
-                                                           "onNoctDockTopScreenFrame", "([BIIJJJ)V");
+        s_noctdock_frame_callback = env->GetStaticMethodID(
+            IDCache::GetNativeLibraryClass(), "onNoctDockTopScreenFrame", "([BIIJJJ)V");
         if (s_noctdock_frame_callback == nullptr) {
             LOG_ERROR(Frontend, "NoctDock frame callback not found");
             s_noctdock_exporting.store(false, std::memory_order_relaxed);

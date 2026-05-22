@@ -37,8 +37,7 @@ extern "C" int NoctDockTopScreenExportHeight() __attribute__((weak));
 extern "C" void NoctDockTopScreenExportSubmitFrame(const u8* rgba, int width, int height,
                                                    s64 readback_time_us, s64 export_time_us)
     __attribute__((weak));
-extern "C" void NoctDockTopScreenExportNotifySurfaceFrame(s64 export_time_us)
-    __attribute__((weak));
+extern "C" void NoctDockTopScreenExportNotifySurfaceFrame(s64 export_time_us) __attribute__((weak));
 extern "C" void NoctDockTopScreenExportReportFailure(const char* message) __attribute__((weak));
 extern "C" void NoctDockTopScreenExportFallbackToReadback(const char* message)
     __attribute__((weak));
@@ -198,10 +197,8 @@ void RendererOpenGL::RenderScreenshot() {
 void RendererOpenGL::ExportNoctDockTopScreen() {
 #ifdef ANDROID
     const auto export_started = std::chrono::steady_clock::now();
-    if (NoctDockTopScreenExportIsEnabled == nullptr ||
-        NoctDockTopScreenExportWidth == nullptr ||
-        NoctDockTopScreenExportHeight == nullptr ||
-        NoctDockTopScreenExportSubmitFrame == nullptr) {
+    if (NoctDockTopScreenExportIsEnabled == nullptr || NoctDockTopScreenExportWidth == nullptr ||
+        NoctDockTopScreenExportHeight == nullptr || NoctDockTopScreenExportSubmitFrame == nullptr) {
         return;
     }
     if (!NoctDockTopScreenExportIsEnabled()) {
@@ -228,42 +225,38 @@ void RendererOpenGL::ExportNoctDockTopScreen() {
 
     const u32 width = static_cast<u32>(std::max(1, NoctDockTopScreenExportWidth()));
     const u32 height = static_cast<u32>(std::max(1, NoctDockTopScreenExportHeight()));
-    const bool use_encoder_surface =
-        NoctDockTopScreenExportUsesEncoderSurface != nullptr &&
-        NoctDockTopScreenExportUsesEncoderSurface() &&
-        NoctDockTopScreenExportBeginEncoderSurface != nullptr &&
-        NoctDockTopScreenExportEndEncoderSurface != nullptr &&
-        NoctDockTopScreenExportNotifySurfaceFrame != nullptr;
+    const bool use_encoder_surface = NoctDockTopScreenExportUsesEncoderSurface != nullptr &&
+                                     NoctDockTopScreenExportUsesEncoderSurface() &&
+                                     NoctDockTopScreenExportBeginEncoderSurface != nullptr &&
+                                     NoctDockTopScreenExportEndEncoderSurface != nullptr &&
+                                     NoctDockTopScreenExportNotifySurfaceFrame != nullptr;
     if (use_encoder_surface) {
         if (NoctDockTopScreenExportBeginEncoderSurface(static_cast<int>(width),
                                                        static_cast<int>(height))) {
-                const OpenGLState previous_state = OpenGLState::GetCurState();
-                GLint previous_viewport[4] = {};
-                glGetIntegerv(GL_VIEWPORT, previous_viewport);
-                glBindFramebuffer(GL_FRAMEBUFFER, 0);
-                glViewport(0, 0, width, height);
-                glClear(GL_COLOR_BUFFER_BIT);
-                const std::array<GLfloat, 3 * 2> ortho_matrix =
-                    MakeOrthographicMatrix(static_cast<float>(width), static_cast<float>(height),
-                                           false);
-                glUniformMatrix3x2fv(uniform_modelview_matrix, 1, GL_FALSE, ortho_matrix.data());
-                glUniform1i(uniform_color_texture, 0);
-                glUniform1i(uniform_layer, 0);
-                ResetSecondLayerOpacity();
-                DrawSingleScreen(screen_infos[0], 0.0f, 0.0f, static_cast<float>(width),
-                                 static_cast<float>(height),
-                                 Layout::DisplayOrientation::Landscape);
-                NoctDockTopScreenExportEndEncoderSurface();
-                const auto export_finished = std::chrono::steady_clock::now();
-                const s64 export_time_us =
-                    std::chrono::duration_cast<std::chrono::microseconds>(export_finished -
-                                                                          export_started)
-                        .count();
-                NoctDockTopScreenExportNotifySurfaceFrame(export_time_us);
-                previous_state.Apply();
-                glViewport(previous_viewport[0], previous_viewport[1], previous_viewport[2],
-                           previous_viewport[3]);
-                return;
+            const OpenGLState previous_state = OpenGLState::GetCurState();
+            GLint previous_viewport[4] = {};
+            glGetIntegerv(GL_VIEWPORT, previous_viewport);
+            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            glViewport(0, 0, width, height);
+            glClear(GL_COLOR_BUFFER_BIT);
+            const std::array<GLfloat, 3 * 2> ortho_matrix = MakeOrthographicMatrix(
+                static_cast<float>(width), static_cast<float>(height), false);
+            glUniformMatrix3x2fv(uniform_modelview_matrix, 1, GL_FALSE, ortho_matrix.data());
+            glUniform1i(uniform_color_texture, 0);
+            glUniform1i(uniform_layer, 0);
+            ResetSecondLayerOpacity();
+            DrawSingleScreen(screen_infos[0], 0.0f, 0.0f, static_cast<float>(width),
+                             static_cast<float>(height), Layout::DisplayOrientation::Landscape);
+            NoctDockTopScreenExportEndEncoderSurface();
+            const auto export_finished = std::chrono::steady_clock::now();
+            const s64 export_time_us = std::chrono::duration_cast<std::chrono::microseconds>(
+                                           export_finished - export_started)
+                                           .count();
+            NoctDockTopScreenExportNotifySurfaceFrame(export_time_us);
+            previous_state.Apply();
+            glViewport(previous_viewport[0], previous_viewport[1], previous_viewport[2],
+                       previous_viewport[3]);
+            return;
         }
         if (NoctDockTopScreenExportFallbackToReadback != nullptr) {
             NoctDockTopScreenExportFallbackToReadback("Using compatibility export mode.");
@@ -308,12 +301,12 @@ void RendererOpenGL::ExportNoctDockTopScreen() {
     const auto readback_started = std::chrono::steady_clock::now();
     glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, noctdock_export_pixels.data());
     const auto readback_finished = std::chrono::steady_clock::now();
-    const s64 readback_time_us = std::chrono::duration_cast<std::chrono::microseconds>(
-                                     readback_finished - readback_started)
-                                     .count();
-    const s64 export_time_us = std::chrono::duration_cast<std::chrono::microseconds>(
-                                   readback_finished - export_started)
-                                   .count();
+    const s64 readback_time_us =
+        std::chrono::duration_cast<std::chrono::microseconds>(readback_finished - readback_started)
+            .count();
+    const s64 export_time_us =
+        std::chrono::duration_cast<std::chrono::microseconds>(readback_finished - export_started)
+            .count();
     NoctDockTopScreenExportSubmitFrame(noctdock_export_pixels.data(), static_cast<int>(width),
                                        static_cast<int>(height), readback_time_us, export_time_us);
 

@@ -193,9 +193,9 @@ void Swapchain::SetPresentMode() {
     const bool has_immediate = find_mode(vk::PresentModeKHR::eImmediate);
     const bool has_mailbox = find_mode(vk::PresentModeKHR::eMailbox);
     if (low_latency_output) {
-        present_mode = has_mailbox ? vk::PresentModeKHR::eMailbox
-                                   : has_immediate ? vk::PresentModeKHR::eImmediate
-                                                   : vk::PresentModeKHR::eFifo;
+        present_mode = has_mailbox     ? vk::PresentModeKHR::eMailbox
+                       : has_immediate ? vk::PresentModeKHR::eImmediate
+                                       : vk::PresentModeKHR::eFifo;
         return;
     }
     if (!has_immediate && !has_mailbox) {
