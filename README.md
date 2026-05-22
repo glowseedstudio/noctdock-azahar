@@ -111,6 +111,8 @@ Useful help right now: real-device testing (handheld + receiver), export perform
 
 When opening issues, do not paste ROM paths or personal data. GPLv2 applies to contributions in the emulator tree.
 
+**Maintainer note:** NoctDock Azahar is maintained in my spare time alongside the main NoctDock apps. I have a full-time job and will do my best to respond to issues as quickly as I can, but I am only human — not Superman. Thank you for your patience.
+
 ---
 
 ## Links
