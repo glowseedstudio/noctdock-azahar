@@ -18,6 +18,30 @@ Package: `com.glowseed.noctdock.azahar` (debug: `com.glowseed.noctdock.azahar.de
 
 ---
 
+## Downloads
+
+Pre-built APKs are on [**GitHub Releases**](https://github.com/glowseedstudio/noctdock-azahar/releases/latest) (Android 10+, arm64 or x86_64).
+
+| APK | Package | When to use |
+| --- | --- | --- |
+| **`*-debug.apk`** | `com.glowseed.noctdock.azahar.debug` | Testing and logs; installs next to release. |
+| **`*-release.apk`** | `com.glowseed.noctdock.azahar` | Day-to-day sideloading (minified). |
+
+You still need **NoctDock Sender** and **NoctDock Receiver** from the [noctdock](https://github.com/glowseedstudio/noctdock) repo. Enable install from unknown sources (or your files app) before installing.
+
+**Build locally** (after `git clone --recursive`):
+
+```bash
+cd src/android
+JAVA_HOME=/usr/lib/jvm/java-17-openjdk ./gradlew :app:assembleVanillaDebug :app:assembleVanillaRelease
+```
+
+APKs land under `src/android/app/build/outputs/apk/vanilla/{debug,release}/`.
+
+**Publish a release** (maintainers): tag `v*` (e.g. `v0.1.0`) and push — the [NoctDock Android release](https://github.com/glowseedstudio/noctdock-azahar/actions/workflows/noctdock-android-release.yml) workflow attaches both APKs. Optional repo secrets `ANDROID_KEYSTORE_*` enable Play-style release signing.
+
+---
+
 ## Why this is a separate app
 
 3DS games are meant to be played on two screens at once. Mirroring the whole Android UI to a TV works for many apps, but it is not the same as a real top-and-bottom layout.
@@ -75,9 +99,9 @@ Copyright Citra Emulator Project / Azahar Emulator Project — see [NOTICE](NOTI
 
 ## Current status
 
-In active development. Integration covers the Android launch bridge, in-app 3DS Mode settings, Kotlin transport, and native renderer hooks. Full fork source and build notes will be published in this repository as the tree is ready for public checkout.
+In active development. Fork source is in this repository; debug and release APKs are published on [**Releases**](https://github.com/glowseedstudio/noctdock-azahar/releases/latest) when tagged.
 
-For integration detail and testing checklists, see the main NoctDock repo (`NOCTDOCK_AZAHAR_INTEGRATION.md`, `NOCTDOCK_AZAHAR_TESTING.md`) when those docs are linked from a combined release.
+For integration detail and testing checklists, see the main NoctDock repo: [`NOCTDOCK_AZAHAR_INTEGRATION.md`](https://github.com/glowseedstudio/noctdock/blob/main/NOCTDOCK_AZAHAR_INTEGRATION.md), [`NOCTDOCK_AZAHAR_TESTING.md`](https://github.com/glowseedstudio/noctdock/blob/main/NOCTDOCK_AZAHAR_TESTING.md).
 
 ---
 

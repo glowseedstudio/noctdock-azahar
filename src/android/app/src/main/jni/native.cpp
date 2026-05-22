@@ -234,9 +234,8 @@ extern "C" void NoctDockTopScreenExportEndEncoderSurface() {
         return;
     }
     if (s_noctdock_egl_presentation_time == nullptr) {
-        s_noctdock_egl_presentation_time =
-            reinterpret_cast<PFNEGLPRESENTATIONTIMEANDROIDPROC>(
-                eglGetProcAddress("eglPresentationTimeANDROID"));
+        s_noctdock_egl_presentation_time = reinterpret_cast<PFNEGLPRESENTATIONTIMEANDROIDPROC>(
+            eglGetProcAddress("eglPresentationTimeANDROID"));
     }
     if (s_noctdock_egl_presentation_time != nullptr) {
         const auto now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -282,9 +281,9 @@ extern "C" void NoctDockTopScreenExportReportFailure(const char* message) {
     }
     JNIEnv* env = IDCache::GetEnvForThread();
     if (s_noctdock_error_callback == nullptr) {
-        s_noctdock_error_callback = env->GetStaticMethodID(
-            IDCache::GetNativeLibraryClass(), "onNoctDockTopScreenExportError",
-            "(Ljava/lang/String;)V");
+        s_noctdock_error_callback =
+            env->GetStaticMethodID(IDCache::GetNativeLibraryClass(),
+                                   "onNoctDockTopScreenExportError", "(Ljava/lang/String;)V");
         if (s_noctdock_error_callback == nullptr) {
             LOG_ERROR(Frontend, "NoctDock export error callback not found");
             return;
@@ -305,15 +304,14 @@ extern "C" void NoctDockTopScreenExportFallbackToReadback(const char* message) {
     const int backend = s_noctdock_export_backend.load(std::memory_order_relaxed);
     s_noctdock_export_path.store(backend == 2 ? 3 : 2, std::memory_order_relaxed);
     JNIEnv* env = IDCache::GetEnvForThread();
-    jmethodID method = env->GetStaticMethodID(IDCache::GetNativeLibraryClass(),
-                                              "onNoctDockSurfaceExportFallback",
-                                              "(Ljava/lang/String;)V");
+    jmethodID method =
+        env->GetStaticMethodID(IDCache::GetNativeLibraryClass(), "onNoctDockSurfaceExportFallback",
+                               "(Ljava/lang/String;)V");
     if (method == nullptr) {
         LOG_ERROR(Frontend, "NoctDock surface fallback callback not found");
         return;
     }
-    const char* safe_message =
-        message != nullptr ? message : "Using compatibility export mode.";
+    const char* safe_message = message != nullptr ? message : "Using compatibility export mode.";
     jstring java_message = env->NewStringUTF(safe_message);
     env->CallStaticVoidMethod(IDCache::GetNativeLibraryClass(), method, java_message);
     env->DeleteLocalRef(java_message);
@@ -339,8 +337,8 @@ extern "C" void NoctDockTopScreenExportSubmitFrame(const u8* rgba, int width, in
 
     JNIEnv* env = IDCache::GetEnvForThread();
     if (s_noctdock_frame_callback == nullptr) {
-        s_noctdock_frame_callback = env->GetStaticMethodID(
-            IDCache::GetNativeLibraryClass(), "onNoctDockTopScreenFrame", "([BIIJJJ)V");
+        s_noctdock_frame_callback = env->GetStaticMethodID(IDCache::GetNativeLibraryClass(),
+                                                           "onNoctDockTopScreenFrame", "([BIIJJJ)V");
         if (s_noctdock_frame_callback == nullptr) {
             LOG_ERROR(Frontend, "NoctDock frame callback not found");
             s_noctdock_exporting.store(false, std::memory_order_relaxed);
@@ -354,11 +352,10 @@ extern "C" void NoctDockTopScreenExportSubmitFrame(const u8* rgba, int width, in
         return;
     }
     env->SetByteArrayRegion(frame, 0, byte_count, reinterpret_cast<const jbyte*>(rgba));
-    env->CallStaticVoidMethod(IDCache::GetNativeLibraryClass(), s_noctdock_frame_callback, frame,
-                              static_cast<jint>(width), static_cast<jint>(height),
-                              static_cast<jlong>(now_ns / 1000),
-                              static_cast<jlong>(readback_time_us),
-                              static_cast<jlong>(export_time_us));
+    env->CallStaticVoidMethod(
+        IDCache::GetNativeLibraryClass(), s_noctdock_frame_callback, frame,
+        static_cast<jint>(width), static_cast<jint>(height), static_cast<jlong>(now_ns / 1000),
+        static_cast<jlong>(readback_time_us), static_cast<jlong>(export_time_us));
     env->DeleteLocalRef(frame);
 }
 
@@ -684,14 +681,15 @@ jboolean Java_org_citra_citra_1emu_NativeLibrary_startNoctDockTopScreenExport(
     }
 
     s_noctdock_export_width.store(std::max(1, static_cast<int>(width)), std::memory_order_relaxed);
-    s_noctdock_export_height.store(std::max(1, static_cast<int>(height)), std::memory_order_relaxed);
+    s_noctdock_export_height.store(std::max(1, static_cast<int>(height)),
+                                   std::memory_order_relaxed);
     s_noctdock_export_fps.store(std::max(1, static_cast<int>(fps)), std::memory_order_relaxed);
     s_noctdock_last_frame_ns.store(0, std::memory_order_relaxed);
-    s_noctdock_export_backend.store(
-        graphics_api == Settings::GraphicsAPI::Vulkan ? 2 : 1, std::memory_order_relaxed);
+    s_noctdock_export_backend.store(graphics_api == Settings::GraphicsAPI::Vulkan ? 2 : 1,
+                                    std::memory_order_relaxed);
     if (s_noctdock_encoder_window != nullptr) {
-        s_noctdock_export_path.store(
-            graphics_api == Settings::GraphicsAPI::Vulkan ? 4 : 1, std::memory_order_relaxed);
+        s_noctdock_export_path.store(graphics_api == Settings::GraphicsAPI::Vulkan ? 4 : 1,
+                                     std::memory_order_relaxed);
     } else if (graphics_api == Settings::GraphicsAPI::Vulkan) {
         s_noctdock_export_path.store(3, std::memory_order_relaxed);
     } else {
@@ -699,8 +697,8 @@ jboolean Java_org_citra_citra_1emu_NativeLibrary_startNoctDockTopScreenExport(
     }
     s_noctdock_error_reported.store(false, std::memory_order_relaxed);
     s_noctdock_exporting.store(true, std::memory_order_relaxed);
-    s_noctdock_frame_callback = env->GetStaticMethodID(
-        IDCache::GetNativeLibraryClass(), "onNoctDockTopScreenFrame", "([BIIJJJ)V");
+    s_noctdock_frame_callback = env->GetStaticMethodID(IDCache::GetNativeLibraryClass(),
+                                                       "onNoctDockTopScreenFrame", "([BIIJJJ)V");
     if (s_noctdock_frame_callback == nullptr) {
         s_noctdock_exporting.store(false, std::memory_order_relaxed);
         LOG_ERROR(Frontend, "NoctDock frame callback not found");
@@ -759,7 +757,8 @@ jstring Java_org_citra_citra_1emu_NativeLibrary_getNoctDockCurrentRendererBacken
 void Java_org_citra_citra_1emu_NativeLibrary_updateNoctDockTopScreenExportProfile(
     [[maybe_unused]] JNIEnv* env, [[maybe_unused]] jobject obj, jint width, jint height, jint fps) {
     s_noctdock_export_width.store(std::max(1, static_cast<int>(width)), std::memory_order_relaxed);
-    s_noctdock_export_height.store(std::max(1, static_cast<int>(height)), std::memory_order_relaxed);
+    s_noctdock_export_height.store(std::max(1, static_cast<int>(height)),
+                                   std::memory_order_relaxed);
     s_noctdock_export_fps.store(std::max(1, static_cast<int>(fps)), std::memory_order_relaxed);
     s_noctdock_last_frame_ns.store(0, std::memory_order_relaxed);
     LOG_INFO(Frontend, "NoctDock 3DS Mode export profile updated to {}x{}@{}",
